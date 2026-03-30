@@ -1,18 +1,11 @@
-name: Deploy - Database Infrastructure
+name: Deploy
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "terraform/**"
-      - ".github/workflows/deploy.yml"
+  pull_request:
+    types: [ closed ]
+    branches:
+      - main
   workflow_dispatch:
-    inputs:
-      auto_approve:
-        description: "Aprovar automaticamente o apply"
-        required: false
-        type: boolean
-        default: true
 
 permissions:
   contents: write
@@ -20,132 +13,102 @@ permissions:
   id-token: write
 
 concurrency:
-  group: deploy-db
+  group: deploy
   cancel-in-progress: false
 
 env:
-  AWS_REGION: us-east-1
-  TF_VERSION: 1.7.0
-  WORKING_DIR: terraform/environments/production
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  # Repository Variables — configure in Settings → Secrets and Variables → Variables
+  # Required: AWS_REGION, TF_VERSION, TF_WORKING_DIR
+  # Optional: BASE_BRANCH (default: main), SOURCE_BRANCH (default: develop)
 
 jobs:
+  # ===========================================
+  # STAGE 1: Deploy Database Infrastructure
+  # ===========================================
   deploy:
     name: Deploy Database
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/'))
     runs-on: ubuntu-latest
-
-    outputs:
-      rds_endpoint: ${{ steps.outputs.outputs.rds_endpoint }}
-      rds_port: ${{ steps.outputs.outputs.rds_port }}
-      rds_database: ${{ steps.outputs.outputs.rds_database }}
+    environment:
+      name: production
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ env.AWS_REGION }}
+          fetch-depth: 0
+          ref: main
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-          terraform_wrapper: false
-
-      - name: Terraform Init
-        working-directory: ${{ env.WORKING_DIR }}
+      - name: Extract Version
+        id: version
         run: |
-          echo "Inicializando Terraform..."
-          terraform init
-
-      - name: Terraform Plan
-        id: plan
-        working-directory: ${{ env.WORKING_DIR }}
-        env:
-          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
-        run: |
-          echo "Gerando plano de execução..."
-          terraform plan -out=tfplan -no-color 2>&1 | tee plan.txt
-
-          if grep -q "No changes" plan.txt; then
-            echo "has_changes=false" >> $GITHUB_OUTPUT
-            echo "::notice::Nenhuma mudança detectada"
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            TAG=$(git tag --sort=-v:refname | head -n 1 || echo "v0.0.0")
           else
-            echo "has_changes=true" >> $GITHUB_OUTPUT
+            BRANCH="${{ github.event.pull_request.head.ref }}"
+            TAG="${BRANCH#release/}"
+          fi
+          echo "VERSION=$TAG" >> $GITHUB_OUTPUT
+          echo "::notice::Version: $TAG"
+
+      - name: Validate Required Secrets
+        run: |
+          MISSING=()
+          [ -z "${{ secrets.AWS_ACCESS_KEY_ID }}" ]     && MISSING+=("AWS_ACCESS_KEY_ID")
+          [ -z "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ] && MISSING+=("AWS_SECRET_ACCESS_KEY")
+          [ -z "${{ secrets.DB_PASSWORD }}" ]            && MISSING+=("DB_PASSWORD")
+          if [ ${#MISSING[@]} -gt 0 ]; then
+            echo "::error::Required secrets missing: ${MISSING[*]}"
+            exit 1
           fi
 
-      - name: Terraform Apply
-        if: steps.plan.outputs.has_changes == 'true' || github.event.inputs.auto_approve == 'true'
-        working-directory: ${{ env.WORKING_DIR }}
-        env:
-          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
-        run: |
-          echo "Aplicando mudanças..."
-
-          if [ "${{ github.event.inputs.auto_approve }}" == "true" ] || [ "${{ github.event_name }}" == "push" ]; then
-            terraform apply -auto-approve tfplan
-          else
-            terraform apply tfplan
-          fi
-
-          echo "Database infrastructure aplicada com sucesso!"
-
-      - name: Get Terraform Outputs
-        id: outputs
-        working-directory: ${{ env.WORKING_DIR }}
-        run: |
-          echo "Coletando outputs..."
-
-          RDS_ENDPOINT=$(terraform output -raw rds_endpoint 2>/dev/null || echo "")
-          RDS_PORT=$(terraform output -raw rds_port 2>/dev/null || echo "5432")
-          RDS_DATABASE=$(terraform output -raw rds_database_name 2>/dev/null || echo "")
-
-          echo "rds_endpoint=$RDS_ENDPOINT" >> $GITHUB_OUTPUT
-          echo "rds_port=$RDS_PORT" >> $GITHUB_OUTPUT
-          echo "rds_database=$RDS_DATABASE" >> $GITHUB_OUTPUT
-
-          echo "::notice::RDS: $RDS_ENDPOINT:$RDS_PORT/$RDS_DATABASE"
-
-      - name: Deploy Summary
-        run: |
-          echo "## Deploy Database Infrastructure" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Recurso | Valor |" >> $GITHUB_STEP_SUMMARY
-          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| RDS Endpoint | ${{ steps.outputs.outputs.rds_endpoint }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| RDS Port | ${{ steps.outputs.outputs.rds_port }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Database | ${{ steps.outputs.outputs.rds_database }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Deployed by:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-
-  post-deploy-check:
-    name: Verificação Pós-Deploy
-    needs: deploy
-    runs-on: ubuntu-latest
-    if: success()
-
-    steps:
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Apply Infrastructure
+        id: apply
+        uses: ./.github/actions/deploy/tf-apply
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ env.AWS_REGION }}
+          tf_version: ${{ vars.TF_VERSION || '1.7.0' }}
+          working_dir: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
+          aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws_session_token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws_region: ${{ env.AWS_REGION }}
+          db_password: ${{ secrets.DB_PASSWORD }}
+          plan_sha: ${{ github.event.pull_request.head.sha }}
 
-      - name: Check RDS Status
-        if: needs.deploy.outputs.rds_endpoint != ''
+      - name: RDS Health Check
+        uses: ./.github/actions/deploy/rds-check
+        with:
+          rds_endpoint: ${{ steps.apply.outputs.rds_endpoint }}
+          aws_region: ${{ env.AWS_REGION }}
+
+      # Tag is created only after a successful RDS health check — a tag represents
+      # exactly what is confirmed running in production. Skipped on workflow_dispatch
+      # since that redeploys an existing version without creating a new tag.
+      - name: Finalize Release Tag
+        if: github.event_name != 'workflow_dispatch'
+        uses: ./.github/actions/release/finalize-tag
+        with:
+          version: ${{ steps.version.outputs.VERSION }}
+
+      - name: Deployment Summary
+        if: always()
         run: |
-          echo "Verificando status do RDS..."
-
-          RDS_ID=$(echo "${{ needs.deploy.outputs.rds_endpoint }}" | cut -d'.' -f1)
-
-          aws rds describe-db-instances \
-            --db-instance-identifier "$RDS_ID" \
-            --query 'DBInstances[0].[DBInstanceStatus,Engine,EngineVersion]' \
-            --output table || echo "Não foi possível verificar status do RDS"
+          {
+            echo "## Deployment Summary"
+            echo ""
+            echo "| Resource | Value |"
+            echo "|----------|-------|"
+            echo "| Version | \`${{ steps.version.outputs.VERSION }}\` |"
+            echo "| RDS Endpoint | \`${{ steps.apply.outputs.rds_endpoint }}\` |"
+            echo "| RDS Port | \`${{ steps.apply.outputs.rds_port }}\` |"
+            echo "| Database | \`${{ steps.apply.outputs.rds_database }}\` |"
+            echo "| Region | \`${{ env.AWS_REGION }}\` |"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Actor | @${{ github.actor }} |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+          } >> $GITHUB_STEP_SUMMARY

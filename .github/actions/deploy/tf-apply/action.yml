@@ -1,0 +1,136 @@
+name: 'Deploy — Terraform Apply'
+description: >
+  Initialises Terraform, runs terraform apply and exports the RDS outputs
+  (endpoint, port, database name). Fails with detailed output on any error —
+  the release tag is NOT created if this action fails.
+
+inputs:
+  tf_version:
+    description: 'Terraform version to use'
+    required: false
+    default: '1.7.0'
+  working_dir:
+    description: 'Path to the Terraform root module'
+    required: false
+    default: 'terraform/environments/production'
+  aws_access_key_id:
+    description: 'AWS Access Key ID'
+    required: true
+  aws_secret_access_key:
+    description: 'AWS Secret Access Key'
+    required: true
+  aws_session_token:
+    description: 'AWS Session Token'
+    required: true
+  aws_region:
+    description: 'AWS region'
+    required: true
+  db_password:
+    description: 'TF_VAR_db_password'
+    required: true
+  plan_sha:
+    description: >
+      SHA of the commit whose CI plan artifact should be reused.
+      When provided, the action downloads tfplan-{sha} from CI and skips re-planning.
+      Falls back to a fresh plan if the artifact is not found or expired.
+    required: false
+    default: ''
+
+outputs:
+  rds_endpoint:
+    description: 'RDS instance endpoint'
+    value: ${{ steps.outputs.outputs.rds_endpoint }}
+  rds_port:
+    description: 'RDS instance port'
+    value: ${{ steps.outputs.outputs.rds_port }}
+  rds_database:
+    description: 'RDS database name'
+    value: ${{ steps.outputs.outputs.rds_database }}
+
+runs:
+  using: composite
+  steps:
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ inputs.aws_access_key_id }}
+        aws-secret-access-key: ${{ inputs.aws_secret_access_key }}
+        aws-session-token: ${{ inputs.aws_session_token }}
+        aws-region: ${{ inputs.aws_region }}
+
+    - name: Cache Terraform Providers
+      uses: actions/cache@v4
+      with:
+        path: ${{ inputs.working_dir }}/.terraform/providers
+        key: tf-providers-${{ runner.os }}-${{ hashFiles(format('{0}/.terraform.lock.hcl', inputs.working_dir)) }}
+        restore-keys: tf-providers-${{ runner.os }}-
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ inputs.tf_version }}
+        terraform_wrapper: false
+
+    - name: Terraform Init
+      shell: bash
+      working-directory: ${{ inputs.working_dir }}
+      run: terraform init
+
+    # Attempt to reuse the plan artifact produced by CI for the same commit.
+    # This avoids re-running plan (~2-3 min) when the PR was just reviewed.
+    # Falls back gracefully if the artifact has expired or plan_sha is not set.
+    - name: Download CI Plan Artifact
+      id: download_plan
+      if: inputs.plan_sha != ''
+      continue-on-error: true
+      uses: actions/download-artifact@v4
+      with:
+        name: tfplan-${{ inputs.plan_sha }}
+        path: ${{ inputs.working_dir }}
+
+    - name: Terraform Plan
+      id: plan
+      if: steps.download_plan.outcome != 'success'
+      shell: bash
+      working-directory: ${{ inputs.working_dir }}
+      env:
+        TF_VAR_db_password: ${{ inputs.db_password }}
+      run: |
+        terraform plan -out=tfplan -no-color 2>&1 | tee plan.txt
+        if grep -q "No changes" plan.txt; then
+          echo "::notice::No infrastructure changes detected"
+        fi
+
+    # Always show the plan that will be applied — critical for audit trail and
+    # especially important when reusing a CI artifact (Plan step was skipped).
+    - name: Show Plan
+      shell: bash
+      working-directory: ${{ inputs.working_dir }}
+      run: |
+        echo "::notice::Changes to be applied:"
+        terraform show -no-color tfplan
+
+    - name: Terraform Apply
+      shell: bash
+      working-directory: ${{ inputs.working_dir }}
+      env:
+        TF_VAR_db_password: ${{ inputs.db_password }}
+      run: |
+        echo "::notice::Applying database infrastructure changes..."
+        terraform apply -auto-approve tfplan
+        echo "::notice::Database infrastructure applied successfully"
+
+    - name: Get Terraform Outputs
+      id: outputs
+      shell: bash
+      working-directory: ${{ inputs.working_dir }}
+      run: |
+        RDS_ENDPOINT=$(terraform output -raw rds_endpoint 2>/dev/null || echo "")
+        RDS_PORT=$(terraform output -raw rds_port 2>/dev/null || echo "5432")
+        RDS_DATABASE=$(terraform output -raw rds_database_name 2>/dev/null || echo "")
+
+        echo "rds_endpoint=$RDS_ENDPOINT" >> $GITHUB_OUTPUT
+        echo "rds_port=$RDS_PORT"         >> $GITHUB_OUTPUT
+        echo "rds_database=$RDS_DATABASE" >> $GITHUB_OUTPUT
+
+        echo "::notice::RDS: $RDS_ENDPOINT:$RDS_PORT/$RDS_DATABASE"

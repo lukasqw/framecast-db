@@ -1,41 +1,86 @@
-name: CI - Validação Terraform
+name: CI
 
 on:
   pull_request:
-    branches: [main, develop]
+    branches: [ develop, main ]
     paths:
       - "terraform/**"
       - ".github/workflows/**"
+  push:
+    branches: [ develop ]
+    paths:
+      - "terraform/**"
 
 permissions:
   contents: read
   pull-requests: write
+  id-token: write
+  security-events: write
 
-env:
-  TF_VERSION: 1.7.0
-  WORKING_DIR: terraform/environments/production
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
+  # ===========================================
+  # STAGE 1: Validate & Structure
+  # ===========================================
   validate:
-    name: Validate Terraform
+    name: Validate
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-
-      - name: Terraform Format Check
-        run: terraform fmt -check -recursive terraform/
-
-      - name: Terraform Init
-        working-directory: ${{ env.WORKING_DIR }}
-        run: terraform init -backend=false
-
       - name: Terraform Validate
-        working-directory: ${{ env.WORKING_DIR }}
-        run: terraform validate
+        uses: ./.github/actions/ci/tf-validate
+        with:
+          tf_version: ${{ vars.TF_VERSION || '1.7.0' }}
+          working_dir: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
+
+      - name: Structure Check
+        uses: ./.github/actions/ci/tf-structure
+        with:
+          working_dir: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
+
+  # ===========================================
+  # STAGE 2: Security & Plan (parallel)
+  # Plan only runs on PRs — on push to develop it has no PR to comment on
+  # and the result is not visible to anyone, so the cost is wasted.
+  # ===========================================
+  security:
+    name: Security Scan
+    needs: validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Security Scan
+        uses: ./.github/actions/ci/tf-security
+        with:
+          working_dir: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
+
+  plan:
+    name: Terraform Plan
+    needs: validate
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Terraform Plan
+        uses: ./.github/actions/ci/tf-plan
+        with:
+          tf_version: ${{ vars.TF_VERSION || '1.7.0' }}
+          working_dir: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
+          aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws_session_token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws_region: ${{ vars.AWS_REGION || 'us-east-1' }}
+          db_password: ${{ secrets.DB_PASSWORD }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}

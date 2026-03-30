@@ -1,0 +1,73 @@
+name: 'CI — Terraform Structure Check'
+description: >
+  Validates that all required Terraform files exist in the environment root
+  and that every module under terraform/modules/ has the three essential files
+  (main.tf, variables.tf, outputs.tf).
+
+inputs:
+  working_dir:
+    description: 'Path to the Terraform root module'
+    required: false
+    default: 'terraform/environments/production'
+  modules_dir:
+    description: 'Path to the Terraform modules directory'
+    required: false
+    default: 'terraform/modules'
+
+runs:
+  using: composite
+  steps:
+    - name: Check Required Files
+      shell: bash
+      run: |
+        echo "::notice::Checking required files in ${{ inputs.working_dir }}"
+        MISSING=()
+        for f in main.tf variables.tf outputs.tf backend.tf; do
+          if [ ! -f "${{ inputs.working_dir }}/$f" ]; then
+            MISSING+=("${{ inputs.working_dir }}/$f")
+          fi
+        done
+
+        if [ ${#MISSING[@]} -gt 0 ]; then
+          for m in "${MISSING[@]}"; do
+            echo "::error::Required file missing: $m"
+          done
+          exit 1
+        fi
+        echo "::notice::All required root files present"
+
+    - name: Check Module Structure
+      shell: bash
+      run: |
+        MODULES_DIR="${{ inputs.modules_dir }}"
+        if [ ! -d "$MODULES_DIR" ]; then
+          echo "::notice::No modules directory found at $MODULES_DIR — skipping"
+          exit 0
+        fi
+
+        WARNINGS=0
+        for module in "$MODULES_DIR"/*/; do
+          [ -d "$module" ] || continue
+          NAME=$(basename "$module")
+          for f in main.tf variables.tf outputs.tf; do
+            if [ ! -f "$module/$f" ]; then
+              echo "::warning::Module $NAME missing $f"
+              WARNINGS=$((WARNINGS + 1))
+            fi
+          done
+        done
+
+        echo "::notice::Module check complete — $WARNINGS warning(s)"
+
+    - name: Structure Summary
+      if: always()
+      shell: bash
+      run: |
+        {
+          echo "## Terraform Structure"
+          echo ""
+          echo "| Check | Status |"
+          echo "|-------|--------|"
+          echo "| Required root files | ${{ job.status }} |"
+          echo "| Module structure | checked (warnings only) |"
+        } >> $GITHUB_STEP_SUMMARY

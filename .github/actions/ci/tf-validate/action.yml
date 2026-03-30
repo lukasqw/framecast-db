@@ -1,0 +1,61 @@
+name: 'CI — Terraform Validate'
+description: >
+  Checks formatting, initialises Terraform without backend and validates
+  the configuration. Fails fast on any formatting or syntax error.
+
+inputs:
+  tf_version:
+    description: 'Terraform version to use'
+    required: false
+    default: '1.7.0'
+  working_dir:
+    description: 'Path to the Terraform root module'
+    required: false
+    default: 'terraform/environments/production'
+
+runs:
+  using: composite
+  steps:
+    - name: Cache Terraform Providers
+      uses: actions/cache@v4
+      with:
+        path: ${{ inputs.working_dir }}/.terraform/providers
+        key: tf-providers-${{ runner.os }}-${{ hashFiles(format('{0}/.terraform.lock.hcl', inputs.working_dir)) }}
+        restore-keys: tf-providers-${{ runner.os }}-
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ inputs.tf_version }}
+
+    - name: Terraform Format Check
+      shell: bash
+      working-directory: ${{ inputs.working_dir }}
+      run: |
+        echo "::notice::Checking Terraform formatting..."
+        terraform fmt -check -recursive -diff
+
+    - name: Terraform Init (no backend)
+      shell: bash
+      working-directory: ${{ inputs.working_dir }}
+      run: terraform init -backend=false
+
+    - name: Terraform Validate
+      shell: bash
+      working-directory: ${{ inputs.working_dir }}
+      run: terraform validate -no-color
+
+    - name: Validation Summary
+      if: always()
+      shell: bash
+      run: |
+        {
+          echo "## Terraform Validation"
+          echo ""
+          echo "| Check | Status |"
+          echo "|-------|--------|"
+          echo "| Format | ${{ job.status }} |"
+          echo "| Validate | ${{ job.status }} |"
+          echo "| Working dir | \`${{ inputs.working_dir }}\` |"
+          echo "| TF version | \`${{ inputs.tf_version }}\` |"
+        } >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,173 @@
+name: 'CI — Terraform Plan'
+description: >
+  Initialises Terraform with the remote backend, runs terraform plan, uploads
+  the plan as an artifact and posts a collapsible summary comment on the PR.
+  The plan file is retained for use by the deploy workflow.
+
+inputs:
+  tf_version:
+    description: 'Terraform version to use'
+    required: false
+    default: '1.7.0'
+  working_dir:
+    description: 'Path to the Terraform root module'
+    required: false
+    default: 'terraform/environments/production'
+  aws_access_key_id:
+    description: 'AWS Access Key ID'
+    required: true
+  aws_secret_access_key:
+    description: 'AWS Secret Access Key'
+    required: true
+  aws_session_token:
+    description: 'AWS Session Token'
+    required: true
+  aws_region:
+    description: 'AWS region'
+    required: true
+  db_password:
+    description: 'TF_VAR_db_password'
+    required: true
+  github_token:
+    description: 'GitHub token — used to post the plan comment on the PR'
+    required: true
+
+outputs:
+  has_changes:
+    description: 'true if the plan contains changes, false otherwise'
+    value: ${{ steps.plan.outputs.has_changes }}
+  artifact_name:
+    description: 'Name of the uploaded plan artifact'
+    value: ${{ steps.artifact.outputs.name }}
+
+runs:
+  using: composite
+  steps:
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ inputs.aws_access_key_id }}
+        aws-secret-access-key: ${{ inputs.aws_secret_access_key }}
+        aws-session-token: ${{ inputs.aws_session_token }}
+        aws-region: ${{ inputs.aws_region }}
+
+    - name: Cache Terraform Providers
+      uses: actions/cache@v4
+      with:
+        path: ${{ inputs.working_dir }}/.terraform/providers
+        key: tf-providers-${{ runner.os }}-${{ hashFiles(format('{0}/.terraform.lock.hcl', inputs.working_dir)) }}
+        restore-keys: tf-providers-${{ runner.os }}-
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ inputs.tf_version }}
+        terraform_wrapper: false
+
+    - name: Terraform Init
+      shell: bash
+      working-directory: ${{ inputs.working_dir }}
+      run: terraform init
+
+    - name: Terraform Plan
+      id: plan
+      shell: bash
+      working-directory: ${{ inputs.working_dir }}
+      env:
+        TF_VAR_db_password: ${{ inputs.db_password }}
+      run: |
+        terraform plan -no-color -out=tfplan 2>&1 | tee plan.txt
+        if grep -q "No changes" plan.txt; then
+          echo "has_changes=false" >> $GITHUB_OUTPUT
+          echo "::notice::No infrastructure changes detected"
+        else
+          echo "has_changes=true" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Upload Plan Artifact
+      id: artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: tfplan-${{ github.sha }}
+        path: |
+          ${{ inputs.working_dir }}/tfplan
+          ${{ inputs.working_dir }}/plan.txt
+        retention-days: 5
+
+    # Posts or updates a single collapsible comment on the PR.
+    # On subsequent pushes to the same PR the old comment is replaced.
+    - name: Comment PR with Plan
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        WORKING_DIR: ${{ inputs.working_dir }}
+      with:
+        github-token: ${{ inputs.github_token }}
+        script: |
+          const fs = require('fs');
+          const planPath = process.env.WORKING_DIR + '/plan.txt';
+
+          let plan = 'Plan file not found';
+          try {
+            plan = fs.readFileSync(planPath, 'utf8');
+            if (plan.length > 60000) {
+              plan = plan.substring(0, 60000) + '\n\n... (truncated)';
+            }
+          } catch (e) {
+            console.log('Error reading plan:', e.message);
+          }
+
+          const output = `## Terraform Plan
+
+          <details>
+          <summary>Click to view full plan</summary>
+
+          \`\`\`terraform
+          ${plan}
+          \`\`\`
+
+          </details>
+
+          ---
+          **Pusher:** @${{ github.actor }} | **Commit:** \`${{ github.sha }}\` | [View Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})`;
+
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+          });
+
+          const existing = comments.find(c =>
+            c.user.type === 'Bot' && c.body.includes('Terraform Plan')
+          );
+
+          if (existing) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: existing.id,
+              body: output,
+            });
+          } else {
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output,
+            });
+          }
+
+    - name: Plan Summary
+      if: always()
+      shell: bash
+      run: |
+        {
+          echo "## Terraform Plan"
+          echo ""
+          echo "| | |"
+          echo "|---|---|"
+          echo "| Has changes | \`${{ steps.plan.outputs.has_changes }}\` |"
+          echo "| Working dir | \`${{ inputs.working_dir }}\` |"
+          echo "| Artifact | \`tfplan-${{ github.sha }}\` |"
+        } >> $GITHUB_STEP_SUMMARY

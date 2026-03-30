@@ -1,0 +1,85 @@
+name: 'Deploy — RDS Health Check'
+description: >
+  Verifies that the RDS instance is in the "available" state after apply.
+  Any failure here prevents the release tag from being created —
+  same pattern as the health checks in oficina-tech and oficina-tech-infra.
+
+inputs:
+  rds_endpoint:
+    description: 'RDS instance endpoint (used to extract the instance identifier)'
+    required: true
+  aws_region:
+    description: 'AWS region'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # Retries up to 5 times (60s apart) to handle transitional RDS states
+    # (modifying, backing-up, upgrading) that occur after Terraform apply completes.
+    # Fresh provisioning is always available immediately (Terraform waits for it),
+    # but updates to existing instances can leave the instance in modifying state.
+    - name: Check RDS Status
+      shell: bash
+      env:
+        RDS_ENDPOINT: ${{ inputs.rds_endpoint }}
+        AWS_REGION: ${{ inputs.aws_region }}
+      run: |
+        if [ -z "$RDS_ENDPOINT" ]; then
+          echo "::error::RDS endpoint is empty — apply may have failed to provision the instance"
+          exit 1
+        fi
+
+        # Extract instance identifier from endpoint (first segment before the first dot)
+        RDS_ID=$(echo "$RDS_ENDPOINT" | cut -d'.' -f1)
+        echo "::notice::Checking RDS instance: $RDS_ID"
+
+        MAX_RETRIES=5
+        RETRY_DELAY=60
+
+        for i in $(seq 1 $MAX_RETRIES); do
+          STATUS=$(aws rds describe-db-instances \
+            --db-instance-identifier "$RDS_ID" \
+            --region "$AWS_REGION" \
+            --query 'DBInstances[0].DBInstanceStatus' \
+            --output text 2>/dev/null || echo "UNKNOWN")
+
+          echo "Attempt $i/$MAX_RETRIES — RDS status: $STATUS"
+
+          if [ "$STATUS" == "available" ]; then
+            echo "::notice::RDS instance $RDS_ID is available"
+            break
+          fi
+
+          if [ "$i" -lt "$MAX_RETRIES" ]; then
+            echo "::notice::RDS not yet available ($STATUS) — retrying in ${RETRY_DELAY}s"
+            sleep $RETRY_DELAY
+          else
+            echo "::error::RDS instance $RDS_ID is not available after $MAX_RETRIES attempts (last status: $STATUS)"
+            exit 1
+          fi
+        done
+
+        # Print instance details for the audit trail
+        aws rds describe-db-instances \
+          --db-instance-identifier "$RDS_ID" \
+          --region "$AWS_REGION" \
+          --query 'DBInstances[0].{Engine:Engine,Version:EngineVersion,Class:DBInstanceClass,MultiAZ:MultiAZ,StorageGB:AllocatedStorage}' \
+          --output table
+
+    - name: Health Check Summary
+      if: always()
+      shell: bash
+      run: |
+        {
+          echo "## RDS Health Check"
+          echo ""
+          echo "| Check | Status |"
+          echo "|-------|--------|"
+          echo "| RDS Status | ${{ job.status }} |"
+          echo ""
+          echo "| Resource | Value |"
+          echo "|----------|-------|"
+          echo "| Endpoint | \`${{ inputs.rds_endpoint }}\` |"
+          echo "| Region | \`${{ inputs.aws_region }}\` |"
+        } >> $GITHUB_STEP_SUMMARY

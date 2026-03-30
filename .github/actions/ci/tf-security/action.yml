@@ -1,0 +1,67 @@
+name: 'CI — Terraform Security Scan'
+description: >
+  Runs tfsec and Checkov against the Terraform configuration and uploads
+  SARIF results to GitHub Security. Both scanners use soft_fail so the step
+  never blocks the workflow — findings are visible in the Security tab.
+
+inputs:
+  working_dir:
+    description: 'Path to the Terraform root module'
+    required: false
+    default: 'terraform/environments/production'
+  minimum_severity:
+    description: 'Minimum severity for tfsec findings (LOW | MEDIUM | HIGH | CRITICAL)'
+    required: false
+    default: 'MEDIUM'
+
+runs:
+  using: composite
+  steps:
+    - name: Run tfsec
+      id: tfsec
+      uses: aquasecurity/tfsec-action@v1.0.3
+      with:
+        working_directory: ${{ inputs.working_dir }}
+        soft_fail: true
+        format: sarif
+        sarif_file: tfsec-results.sarif
+        additional_args: --minimum-severity ${{ inputs.minimum_severity }}
+
+    - name: Upload tfsec SARIF
+      if: always() && hashFiles('tfsec-results.sarif') != ''
+      uses: github/codeql-action/upload-sarif@v4
+      continue-on-error: true
+      with:
+        sarif_file: tfsec-results.sarif
+
+    - name: Run Checkov
+      id: checkov
+      uses: bridgecrewio/checkov-action@v12
+      with:
+        directory: ${{ inputs.working_dir }}
+        framework: terraform
+        soft_fail: true
+        output_format: sarif
+        output_file_path: ./checkov-results.sarif
+
+    - name: Upload Checkov SARIF
+      if: always() && hashFiles('checkov-results.sarif') != ''
+      uses: github/codeql-action/upload-sarif@v4
+      continue-on-error: true
+      with:
+        sarif_file: checkov-results.sarif
+
+    - name: Security Summary
+      if: always()
+      shell: bash
+      run: |
+        {
+          echo "## Terraform Security Scan"
+          echo ""
+          echo "| Scanner | Status |"
+          echo "|---------|--------|"
+          echo "| tfsec | ${{ steps.tfsec.outcome }} |"
+          echo "| Checkov | ${{ steps.checkov.outcome }} |"
+          echo ""
+          echo "Check the **Security** tab for full findings."
+        } >> $GITHUB_STEP_SUMMARY

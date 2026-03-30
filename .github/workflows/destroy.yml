@@ -17,18 +17,16 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: us-east-1
-  TF_VERSION: 1.7.0
-  WORKING_DIR: terraform/environments/production
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
 
 jobs:
   destroy:
-    name: Destroy - production
+    name: Destroy — production
     runs-on: ubuntu-latest
     environment: production-destroy
 
     steps:
-      - name: Validate confirmation
+      - name: Validate Confirmation
         run: |
           if [ "${{ github.event.inputs.confirmation }}" != "DESTROY" ]; then
             echo "::error::Confirmation must be exactly 'DESTROY'"
@@ -49,15 +47,15 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: ${{ env.TF_VERSION }}
+          terraform_version: ${{ vars.TF_VERSION || '1.7.0' }}
           terraform_wrapper: false
 
       - name: Terraform Init
-        working-directory: ${{ env.WORKING_DIR }}
+        working-directory: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
         run: terraform init
 
       - name: Terraform Destroy
-        working-directory: ${{ env.WORKING_DIR }}
+        working-directory: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
         env:
           TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
         run: terraform destroy -auto-approve
