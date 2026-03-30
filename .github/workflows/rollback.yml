@@ -1,12 +1,12 @@
-name: Deploy
+name: Rollback DB Infrastructure
 
 on:
-  pull_request:
-    types: [ closed ]
-    branches:
-      - main
   workflow_dispatch:
     inputs:
+      version:
+        description: 'Version to rollback to (e.g. v1.2.3) — must be an existing tag'
+        required: true
+        type: string
       environment:
         description: 'Target environment'
         required: false
@@ -17,10 +17,10 @@ on:
         default: production
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
   id-token: write
 
+# Same concurrency group as deploy — prevents a rollback from running alongside a deploy.
 concurrency:
   group: deploy
   cancel-in-progress: false
@@ -28,42 +28,40 @@ concurrency:
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
   ENVIRONMENT: ${{ github.event.inputs.environment || 'production' }}
-  # Repository Variables — configure in Settings → Secrets and Variables → Variables
-  # Required: AWS_REGION, TF_VERSION, TF_WORKING_DIR
-  # Optional: TF_WORKING_DIR_STAGING, BASE_BRANCH (default: main), SOURCE_BRANCH (default: develop)
 
 jobs:
-  # ===========================================
-  # STAGE 1: Deploy Database Infrastructure
-  # ===========================================
-  deploy:
-    name: Deploy Database
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/'))
+  rollback:
+    name: Rollback to ${{ github.event.inputs.version }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment:
       name: ${{ github.event.inputs.environment || 'production' }}
 
     steps:
-      - name: Checkout
+      - name: Validate Version Format
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version format: '$VERSION'. Expected format: v1.2.3"
+            exit 1
+          fi
+
+      # Checkout at the specific tag so Terraform code and actions
+      # match exactly what was applied at that version.
+      - name: Checkout at ${{ github.event.inputs.version }}
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.inputs.version }}
           fetch-depth: 0
-          ref: main
 
-      - name: Extract Version
-        id: version
+      - name: Validate Tag Exists
         run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            TAG=$(git tag --sort=-v:refname | head -n 1 || echo "v0.0.0")
-          else
-            BRANCH="${{ github.event.pull_request.head.ref }}"
-            TAG="${BRANCH#release/}"
+          VERSION="${{ github.event.inputs.version }}"
+          if ! git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "::error::Tag '$VERSION' does not exist in this repository"
+            exit 1
           fi
-          echo "VERSION=$TAG" >> $GITHUB_OUTPUT
-          echo "::notice::Version: $TAG"
+          echo "::notice::Rolling back to $VERSION ($(git rev-parse --short $VERSION))"
 
       - name: Validate Required Secrets
         run: |
@@ -76,7 +74,9 @@ jobs:
             exit 1
           fi
 
-      - name: Apply Infrastructure
+      # plan_sha is intentionally omitted — rollback always generates a fresh plan
+      # against the checked-out tag to avoid applying a stale/mismatched artifact.
+      - name: Apply DB Infrastructure at ${{ github.event.inputs.version }}
         id: apply
         uses: ./.github/actions/deploy/tf-apply
         with:
@@ -90,7 +90,6 @@ jobs:
           aws_session_token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws_region: ${{ env.AWS_REGION }}
           db_password: ${{ secrets.DB_PASSWORD }}
-          plan_sha: ${{ github.event.pull_request.head.sha }}
 
       - name: RDS Health Check
         uses: ./.github/actions/deploy/rds-check
@@ -98,24 +97,15 @@ jobs:
           rds_endpoint: ${{ steps.apply.outputs.rds_endpoint }}
           aws_region: ${{ env.AWS_REGION }}
 
-      # Tag is created only after a successful RDS health check — a tag represents
-      # exactly what is confirmed running in production. Skipped on workflow_dispatch
-      # since that redeploys an existing version without creating a new tag.
-      - name: Finalize Release Tag
-        if: github.event_name != 'workflow_dispatch'
-        uses: ./.github/actions/release/finalize-tag
-        with:
-          version: ${{ steps.version.outputs.VERSION }}
-
-      - name: Deployment Summary
+      - name: Rollback Summary
         if: always()
         run: |
           {
-            echo "## Deployment Summary"
+            echo "## Rollback Summary"
             echo ""
             echo "| Resource | Value |"
             echo "|----------|-------|"
-            echo "| Version | \`${{ steps.version.outputs.VERSION }}\` |"
+            echo "| Rolled back to | \`${{ github.event.inputs.version }}\` |"
             echo "| Environment | \`${{ env.ENVIRONMENT }}\` |"
             echo "| RDS Endpoint | \`${{ steps.apply.outputs.rds_endpoint }}\` |"
             echo "| RDS Port | \`${{ steps.apply.outputs.rds_port }}\` |"
@@ -125,5 +115,7 @@ jobs:
             echo "| | |"
             echo "|---|---|"
             echo "| Actor | @${{ github.actor }} |"
-            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Run | [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |"
+            echo ""
+            echo "> **Note:** No new tag was created. The rollback applied the Terraform state from \`${{ github.event.inputs.version }}\`."
           } >> $GITHUB_STEP_SUMMARY

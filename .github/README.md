@@ -33,6 +33,7 @@ push to develop (terraform/**)
 | `release.yml` | Push em `develop` (paths: terraform/\*\*), `workflow_dispatch` | Cria ou atualiza PR de release |
 | `deploy.yml` | PR de `release/*` mergeado em `main`, `workflow_dispatch` (com seleção de ambiente) | Terraform apply, RDS health check, finaliza tag |
 | `destroy.yml` | `workflow_dispatch` (confirmação manual) | Terraform destroy |
+| `rollback.yml` | `workflow_dispatch` (versão + ambiente) | Aplica Terraform de uma tag anterior; sem criar nova tag |
 
 ## Composite Actions
 

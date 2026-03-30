@@ -23,6 +23,7 @@ jobs:
   destroy:
     name: Destroy — production
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     environment: production-destroy
 
     steps:
