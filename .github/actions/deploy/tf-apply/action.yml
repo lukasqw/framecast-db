@@ -88,6 +88,12 @@ runs:
         name: tfplan-${{ inputs.plan_sha }}
         path: ${{ inputs.working_dir }}
 
+    - name: Warn — Plan Artifact Not Reused
+      if: inputs.plan_sha != '' && steps.download_plan.outcome != 'success'
+      shell: bash
+      run: |
+        echo "::warning::CI plan artifact 'tfplan-${{ inputs.plan_sha }}' was not found (expired or unavailable). A fresh plan will be generated — this plan was NOT reviewed in the PR."
+
     - name: Terraform Plan
       id: plan
       if: steps.download_plan.outcome != 'success'
@@ -116,6 +122,10 @@ runs:
       env:
         TF_VAR_db_password: ${{ inputs.db_password }}
       run: |
+        if [ ! -f tfplan ]; then
+          echo "::error::tfplan not found — the plan step may have failed or produced no output. Aborting apply."
+          exit 1
+        fi
         echo "::notice::Applying database infrastructure changes..."
         terraform apply -auto-approve tfplan
         echo "::notice::Database infrastructure applied successfully"

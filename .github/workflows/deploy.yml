@@ -6,6 +6,15 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: false
+        type: choice
+        options:
+          - production
+          - staging
+        default: production
 
 permissions:
   contents: write
@@ -18,9 +27,10 @@ concurrency:
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  ENVIRONMENT: ${{ github.event.inputs.environment || 'production' }}
   # Repository Variables — configure in Settings → Secrets and Variables → Variables
   # Required: AWS_REGION, TF_VERSION, TF_WORKING_DIR
-  # Optional: BASE_BRANCH (default: main), SOURCE_BRANCH (default: develop)
+  # Optional: TF_WORKING_DIR_STAGING, BASE_BRANCH (default: main), SOURCE_BRANCH (default: develop)
 
 jobs:
   # ===========================================
@@ -33,7 +43,7 @@ jobs:
       (github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/'))
     runs-on: ubuntu-latest
     environment:
-      name: production
+      name: ${{ github.event.inputs.environment || 'production' }}
 
     steps:
       - name: Checkout
@@ -70,7 +80,10 @@ jobs:
         uses: ./.github/actions/deploy/tf-apply
         with:
           tf_version: ${{ vars.TF_VERSION || '1.7.0' }}
-          working_dir: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
+          working_dir: >-
+            ${{ env.ENVIRONMENT == 'staging'
+              && (vars.TF_WORKING_DIR_STAGING || 'terraform/environments/staging')
+              || (vars.TF_WORKING_DIR || 'terraform/environments/production') }}
           aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws_session_token: ${{ secrets.AWS_SESSION_TOKEN }}
@@ -102,6 +115,7 @@ jobs:
             echo "| Resource | Value |"
             echo "|----------|-------|"
             echo "| Version | \`${{ steps.version.outputs.VERSION }}\` |"
+            echo "| Environment | \`${{ env.ENVIRONMENT }}\` |"
             echo "| RDS Endpoint | \`${{ steps.apply.outputs.rds_endpoint }}\` |"
             echo "| RDS Port | \`${{ steps.apply.outputs.rds_port }}\` |"
             echo "| Database | \`${{ steps.apply.outputs.rds_database }}\` |"

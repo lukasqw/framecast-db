@@ -31,7 +31,7 @@ push to develop (terraform/**)
 |---|---|---|
 | `ci.yml` | PR para `develop`/`main` (paths: terraform/\*\*), push em `develop` | Validate, security scan, terraform plan |
 | `release.yml` | Push em `develop` (paths: terraform/\*\*), `workflow_dispatch` | Cria ou atualiza PR de release |
-| `deploy.yml` | PR de `release/*` mergeado em `main`, `workflow_dispatch` | Terraform apply, RDS health check, finaliza tag |
+| `deploy.yml` | PR de `release/*` mergeado em `main`, `workflow_dispatch` (com seleção de ambiente) | Terraform apply, RDS health check, finaliza tag |
 | `destroy.yml` | `workflow_dispatch` (confirmação manual) | Terraform destroy |
 
 ## Composite Actions
@@ -64,6 +64,7 @@ Veja [`variables.env.example`](variables.env.example) para a lista completa.
 | `AWS_REGION` | Região AWS |
 | `TF_VERSION` | Versão do Terraform (ex: `1.7.0`) |
 | `TF_WORKING_DIR` | Caminho do módulo Terraform (ex: `terraform/environments/production`) |
+| `TF_WORKING_DIR_STAGING` | (opcional) Caminho do módulo para staging (default: `terraform/environments/staging`) |
 
 ### Secrets obrigatórios
 
