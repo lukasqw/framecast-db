@@ -1,9 +1,18 @@
 # Main Configuration - Database Infrastructure
+#
+# Provisiona:
+#   - 1 Security Group compartilhado pelas 3 instâncias RDS
+#   - 3 instâncias RDS PostgreSQL 16 (db_ms1, db_ms2, db_ms3)
+#   - 1 tabela DynamoDB (order_history) para ms-order-service
+#
+# ATENÇÃO: migrar de uma instância única para for_each destrói e recria
+# os recursos RDS. Fazer backup antes de aplicar em ambiente existente.
 
-# RDS Security Group
+# ─── Security Group (compartilhado pelas 3 instâncias) ───────────────────────
+
 resource "aws_security_group" "rds" {
   name        = "${var.project_name}-rds-sg"
-  description = "Security group for RDS database"
+  description = "Security group for RDS databases (db_ms1, db_ms2, db_ms3)"
   vpc_id      = data.aws_vpc.main.id
 
   tags = merge(
@@ -17,7 +26,7 @@ resource "aws_security_group" "rds" {
   )
 }
 
-# Regra: EKS SG (módulo security-groups) → RDS
+# EKS SG (módulo security-groups) → RDS
 resource "aws_vpc_security_group_ingress_rule" "rds_from_eks" {
   security_group_id            = aws_security_group.rds.id
   description                  = "PostgreSQL from EKS cluster security group"
@@ -27,7 +36,7 @@ resource "aws_vpc_security_group_ingress_rule" "rds_from_eks" {
   referenced_security_group_id = local.eks_security_group_id
 }
 
-# Regra: EKS cluster SG (auto-criado pelo EKS) → RDS
+# EKS cluster SG (auto-criado pelo EKS) → RDS
 resource "aws_vpc_security_group_ingress_rule" "rds_from_eks_cluster_nodes" {
   security_group_id            = aws_security_group.rds.id
   description                  = "PostgreSQL from EKS cluster nodes (auto-created cluster SG)"
@@ -45,10 +54,10 @@ resource "aws_vpc_security_group_ingress_rule" "rds_from_eks_cluster_nodes" {
   )
 }
 
-# Regra: VPC CIDR → RDS (permite pods conectarem)
+# VPC CIDR → RDS (permite pods sem SG explícito conectarem)
 resource "aws_vpc_security_group_ingress_rule" "rds_from_vpc" {
   security_group_id = aws_security_group.rds.id
-  description       = "PostgreSQL from VPC CIDR (allows pods to connect)"
+  description       = "PostgreSQL from VPC CIDR (allows all pods to connect)"
   from_port         = 5432
   to_port           = 5432
   ip_protocol       = "tcp"
@@ -62,16 +71,23 @@ resource "aws_vpc_security_group_egress_rule" "rds_all" {
   cidr_ipv4         = "0.0.0.0/0"
 }
 
-# RDS PostgreSQL
-module "rds" {
-  source = "../../modules/rds"
+# ─── RDS PostgreSQL — uma instância por microsserviço ────────────────────────
+#
+# for_each em local.databases cria:
+#   module.rds["ms1"] → db_ms1  (ms-identity)
+#   module.rds["ms2"] → db_ms2  (ms-order-service)
+#   module.rds["ms3"] → db_ms3  (ms-workshop)
 
-  identifier     = "${lower(var.project_name)}-db"
+module "rds" {
+  for_each = local.databases
+  source   = "../../modules/rds"
+
+  identifier     = each.value.identifier
   engine_version = var.rds_engine_version
   instance_class = var.rds_instance_class
 
-  database_name = local.db_name
-  username      = local.db_username
+  database_name = each.value.database_name
+  username      = each.value.username
   password      = var.db_password
 
   subnet_ids             = local.filtered_subnet_ids
@@ -83,5 +99,47 @@ module "rds" {
   skip_final_snapshot     = var.rds_skip_final_snapshot
   deletion_protection     = var.rds_deletion_protection
 
-  tags = local.common_tags
+  tags = merge(
+    local.common_tags,
+    {
+      Microservice = each.key
+      Database     = each.value.database_name
+      Description  = each.value.description
+    }
+  )
+}
+
+# ─── DynamoDB — histórico de OS do ms-order-service ──────────────────────────
+#
+# Tabela com billing PAY_PER_REQUEST (sem capacity planning manual).
+# Partition key: order_id (UUID da OS)
+# Sort key:      occurred_at (ISO 8601 — garante ordenação cronológica)
+
+resource "aws_dynamodb_table" "order_history" {
+  name         = var.dynamodb_order_history_table
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "order_id"
+  range_key    = "occurred_at"
+
+  attribute {
+    name = "order_id"
+    type = "S"
+  }
+
+  attribute {
+    name = "occurred_at"
+    type = "S"
+  }
+
+  # TTL opcional — desabilitado (histórico mantido indefinidamente)
+  # Para habilitar: adicionar ttl { attribute_name = "expires_at"; enabled = true }
+
+  tags = merge(
+    local.common_tags,
+    {
+      Name         = var.dynamodb_order_history_table
+      Microservice = "ms2"
+      Purpose      = "service-order-status-history"
+    }
+  )
 }
