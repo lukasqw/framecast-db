@@ -74,3 +74,10 @@ variable "dynamodb_order_history_table" {
   type        = string
   default     = "order_history"
 }
+
+# ─── Terraform State ──────────────────────────────────────────────────────────
+variable "tf_state_bucket" {
+  description = "Bucket S3 para state do Terraform. Configure TF_STATE_BUCKET nas variáveis do repositório no GitHub Actions. Default mantido para compatibilidade local."
+  type        = string
+  default     = "fiap-soat-tf-backend-bispo-730335587750"
+}

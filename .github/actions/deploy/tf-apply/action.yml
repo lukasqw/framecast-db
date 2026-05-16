@@ -13,6 +13,9 @@ inputs:
     description: 'Path to the Terraform root module'
     required: false
     default: 'terraform/environments/production'
+  tf_state_bucket:
+    description: 'S3 bucket for Terraform state — maps to TF_STATE_BUCKET GitHub Actions variable'
+    required: true
   aws_access_key_id:
     description: 'AWS Access Key ID'
     required: true
@@ -74,11 +77,11 @@ runs:
     - name: Terraform Init
       shell: bash
       working-directory: ${{ inputs.working_dir }}
-      run: terraform init
+      run: |
+        terraform init \
+          -backend-config="bucket=${{ inputs.tf_state_bucket }}" \
+          -backend-config="region=${{ inputs.aws_region }}"
 
-    # Attempt to reuse the plan artifact produced by CI for the same commit.
-    # This avoids re-running plan (~2-3 min) when the PR was just reviewed.
-    # Falls back gracefully if the artifact has expired or plan_sha is not set.
     - name: Download CI Plan Artifact
       id: download_plan
       if: inputs.plan_sha != ''
@@ -101,14 +104,13 @@ runs:
       working-directory: ${{ inputs.working_dir }}
       env:
         TF_VAR_db_password: ${{ inputs.db_password }}
+        TF_VAR_tf_state_bucket: ${{ inputs.tf_state_bucket }}
       run: |
         terraform plan -out=tfplan -no-color 2>&1 | tee plan.txt
         if grep -q "No changes" plan.txt; then
           echo "::notice::No infrastructure changes detected"
         fi
 
-    # Always show the plan that will be applied — critical for audit trail and
-    # especially important when reusing a CI artifact (Plan step was skipped).
     - name: Show Plan
       shell: bash
       working-directory: ${{ inputs.working_dir }}
@@ -121,6 +123,7 @@ runs:
       working-directory: ${{ inputs.working_dir }}
       env:
         TF_VAR_db_password: ${{ inputs.db_password }}
+        TF_VAR_tf_state_bucket: ${{ inputs.tf_state_bucket }}
       run: |
         if [ ! -f tfplan ]; then
           echo "::error::tfplan not found — the plan step may have failed or produced no output. Aborting apply."

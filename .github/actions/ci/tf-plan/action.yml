@@ -13,6 +13,9 @@ inputs:
     description: 'Path to the Terraform root module'
     required: false
     default: 'terraform/environments/production'
+  tf_state_bucket:
+    description: 'S3 bucket for Terraform state — maps to TF_STATE_BUCKET GitHub Actions variable'
+    required: true
   aws_access_key_id:
     description: 'AWS Access Key ID'
     required: true
@@ -67,7 +70,10 @@ runs:
     - name: Terraform Init
       shell: bash
       working-directory: ${{ inputs.working_dir }}
-      run: terraform init
+      run: |
+        terraform init \
+          -backend-config="bucket=${{ inputs.tf_state_bucket }}" \
+          -backend-config="region=${{ inputs.aws_region }}"
 
     - name: Terraform Plan
       id: plan
@@ -75,6 +81,7 @@ runs:
       working-directory: ${{ inputs.working_dir }}
       env:
         TF_VAR_db_password: ${{ inputs.db_password }}
+        TF_VAR_tf_state_bucket: ${{ inputs.tf_state_bucket }}
       run: |
         terraform plan -no-color -out=tfplan 2>&1 | tee plan.txt
         if grep -q "No changes" plan.txt; then
@@ -94,8 +101,6 @@ runs:
           ${{ inputs.working_dir }}/plan.txt
         retention-days: 5
 
-    # Posts or updates a single collapsible comment on the PR.
-    # On subsequent pushes to the same PR the old comment is replaced.
     - name: Comment PR with Plan
       if: github.event_name == 'pull_request'
       uses: actions/github-script@v7

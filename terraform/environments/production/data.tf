@@ -2,9 +2,9 @@
 data "terraform_remote_state" "infra" {
   backend = "s3"
   config = {
-    bucket = "fiap-soat-tf-backend-bispo-730335587750"
+    bucket = var.tf_state_bucket
     key    = "fiap/infra/terraform.tfstate"
-    region = "us-east-1"
+    region = var.aws_region
   }
 }
 

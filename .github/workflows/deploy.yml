@@ -85,6 +85,7 @@ jobs:
             ${{ env.ENVIRONMENT == 'staging'
               && (vars.TF_WORKING_DIR_STAGING || 'terraform/environments/staging')
               || (vars.TF_WORKING_DIR || 'terraform/environments/production') }}
+          tf_state_bucket: ${{ vars.TF_STATE_BUCKET }}
           aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws_session_token: ${{ secrets.AWS_SESSION_TOKEN }}
