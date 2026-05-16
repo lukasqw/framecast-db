@@ -15,6 +15,11 @@ on:
           - minor
           - major
         default: "minor"
+      force_reset:
+        description: "Delete orphaned release/* branches (no open PR) before creating a new release. Use when a deploy failed and the branch is stuck."
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -37,6 +42,33 @@ jobs:
         with:
           fetch-depth: 0 # required for git tag history and changelog
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      # FORCE RESET: deletes orphaned release/* branches (branch exists, no open PR).
+      # Triggered manually via workflow_dispatch with force_reset=true.
+      # Use when a deploy failed before creating the tag and the branch is stuck.
+      - name: Force Reset — Delete orphaned release branches
+        if: github.event.inputs.force_reset == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "::notice::force_reset=true — procurando branches release/* sem PR aberto..."
+          BRANCHES=$(gh api "repos/${{ github.repository }}/branches" \
+            --jq '.[].name | select(startswith("release/"))' 2>/dev/null || echo "")
+
+          if [ -z "$BRANCHES" ]; then
+            echo "::notice::Nenhuma branch release/* encontrada."
+          fi
+
+          for BRANCH in $BRANCHES; do
+            HAS_PR=$(gh pr list --base main --head "$BRANCH" --state open --json number --jq 'length' 2>/dev/null || echo "0")
+            if [ "$HAS_PR" = "0" ]; then
+              echo "::notice::Deletando branch órfã: $BRANCH"
+              gh api -X DELETE "repos/${{ github.repository }}/git/refs/heads/$BRANCH"
+              echo "::notice::Branch $BRANCH deletada."
+            else
+              echo "::notice::Branch $BRANCH tem PR aberto — mantendo."
+            fi
+          done
 
       # Checks if there is already an open PR from a release/* branch to main.
       # This determines which path the workflow takes:
