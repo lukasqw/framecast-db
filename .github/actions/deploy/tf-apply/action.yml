@@ -89,6 +89,47 @@ runs:
         printf 'bucket = "%s"\nregion = "%s"\n' "$TF_BACKEND_BUCKET" "$TF_BACKEND_REGION" > /tmp/backend-override.hcl
         terraform init -backend-config=/tmp/backend-override.hcl
 
+    - name: Cleanup Orphaned RDS Subnet Groups
+      shell: bash
+      working-directory: ${{ inputs.working_dir }}
+      run: |
+        # When RDS instances are deleted manually, subnet groups are left behind in AWS.
+        # On the next apply Terraform tries to ModifyDBSubnetGroup and fails with a VPC
+        # mismatch error. This step detects those orphans and removes them before planning.
+        SUBNET_GROUPS=$(terraform state list 2>/dev/null | grep 'aws_db_subnet_group' || true)
+
+        if [ -z "$SUBNET_GROUPS" ]; then
+          echo "No RDS subnet groups in state — skipping cleanup"
+          exit 0
+        fi
+
+        CLEANED=0
+        while IFS= read -r addr; do
+          SG_NAME=$(terraform state show "$addr" 2>/dev/null \
+            | grep -E '^\s+name\s+=' | awk '{print $NF}' | tr -d '"')
+          [ -z "$SG_NAME" ] && continue
+
+          # Skip if the subnet group no longer exists in AWS
+          aws rds describe-db-subnet-groups \
+            --db-subnet-group-name "$SG_NAME" > /dev/null 2>&1 || continue
+
+          # Derive the RDS identifier: strip trailing "-subnet-group"
+          DB_ID="${SG_NAME%-subnet-group}"
+
+          # If the RDS instance is gone, the subnet group is orphaned
+          if ! aws rds describe-db-instances \
+            --db-instance-identifier "$DB_ID" > /dev/null 2>&1; then
+            echo "::warning::Orphaned subnet group '$SG_NAME' (RDS '$DB_ID' not found) — removing from state and AWS"
+            terraform state rm "$addr" || true
+            aws rds delete-db-subnet-group --db-subnet-group-name "$SG_NAME" || true
+            CLEANED=$((CLEANED + 1))
+          fi
+        done <<< "$SUBNET_GROUPS"
+
+        [ $CLEANED -gt 0 ] \
+          && echo "::notice::Cleaned up $CLEANED orphaned subnet group(s) — Terraform will recreate them" \
+          || echo "No orphaned subnet groups found"
+
     - name: Download CI Plan Artifact
       id: download_plan
       if: inputs.plan_sha != ''
