@@ -4,28 +4,26 @@ on:
   push:
     branches:
       - develop
-    paths:
-      - "terraform/**"
   workflow_dispatch:
     inputs:
       release_type:
-        description: 'Release type — push auto-detects from conventional commits; this input is only used on workflow_dispatch'
+        description: "Release type — push auto-detects from conventional commits; this input is only used on workflow_dispatch"
         required: true
         type: choice
         options:
           - patch
           - minor
           - major
-        default: 'minor'
+        default: "minor"
 
 permissions:
   contents: write
   pull-requests: write
-  issues: write  # required for gh label create
+  issues: write # required for gh label create
 
 concurrency:
   group: release
-  cancel-in-progress: false  # never cancel a release in progress
+  cancel-in-progress: false # never cancel a release in progress
 
 jobs:
   release-pr:
@@ -37,7 +35,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # required for git tag history and changelog
+          fetch-depth: 0 # required for git tag history and changelog
           token: ${{ secrets.GITHUB_TOKEN }}
 
       # Checks if there is already an open PR from a release/* branch to main.
