@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
 
 jobs:
   destroy:
@@ -48,18 +48,18 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: ${{ secrets.TF_VERSION || '1.7.0' }}
+          terraform_version: ${{ vars.TF_VERSION || '1.7.0' }}
           terraform_wrapper: false
 
       - name: Terraform Init
-        working-directory: ${{ secrets.TF_WORKING_DIR || 'terraform/environments/production' }}
+        working-directory: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
         run: |
           terraform init \
-            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
             -backend-config="region=${{ env.AWS_REGION }}"
 
       - name: Terraform Destroy
-        working-directory: ${{ secrets.TF_WORKING_DIR || 'terraform/environments/production' }}
+        working-directory: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
         env:
           TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
         run: terraform destroy -auto-approve

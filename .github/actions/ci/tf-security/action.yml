@@ -13,6 +13,10 @@ inputs:
     description: 'Minimum severity for tfsec findings (LOW | MEDIUM | HIGH | CRITICAL)'
     required: false
     default: 'MEDIUM'
+  github_token:
+    description: 'GitHub token to avoid API rate limiting when downloading tfsec'
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -20,6 +24,8 @@ runs:
     - name: Run tfsec
       id: tfsec
       uses: aquasecurity/tfsec-action@v1.0.3
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
       with:
         working_directory: ${{ inputs.working_dir }}
         soft_fail: true

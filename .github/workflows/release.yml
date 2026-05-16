@@ -107,7 +107,7 @@ jobs:
           pr_number: ${{ steps.check_pr.outputs.pr_number }}
           pr_branch: ${{ steps.check_pr.outputs.pr_branch }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          source_branch: ${{ secrets.SOURCE_BRANCH || 'develop' }}
+          source_branch: ${{ vars.SOURCE_BRANCH || 'develop' }}
 
       # PATH B: No open PR â†’ detect version, validate guards,
       #         create release branch and open a draft PR to main.
@@ -118,8 +118,8 @@ jobs:
         with:
           release_type: ${{ github.event.inputs.release_type }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          base_branch: ${{ secrets.BASE_BRANCH || 'main' }}
-          source_branch: ${{ secrets.SOURCE_BRANCH || 'develop' }}
+          base_branch: ${{ vars.BASE_BRANCH || 'main' }}
+          source_branch: ${{ vars.SOURCE_BRANCH || 'develop' }}
 
       - name: Job Summary
         if: always()

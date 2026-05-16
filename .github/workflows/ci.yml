@@ -37,13 +37,13 @@ jobs:
       - name: Terraform Validate
         uses: ./.github/actions/ci/tf-validate
         with:
-          tf_version: ${{ secrets.TF_VERSION || '1.7.0' }}
-          working_dir: ${{ secrets.TF_WORKING_DIR || 'terraform/environments/production' }}
+          tf_version: ${{ vars.TF_VERSION || '1.7.0' }}
+          working_dir: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
 
       - name: Structure Check
         uses: ./.github/actions/ci/tf-structure
         with:
-          working_dir: ${{ secrets.TF_WORKING_DIR || 'terraform/environments/production' }}
+          working_dir: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
 
   # ===========================================
   # STAGE 2: Security & Plan (parallel)
@@ -63,7 +63,8 @@ jobs:
       - name: Security Scan
         uses: ./.github/actions/ci/tf-security
         with:
-          working_dir: ${{ secrets.TF_WORKING_DIR || 'terraform/environments/production' }}
+          working_dir: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
   plan:
     name: Terraform Plan
@@ -79,12 +80,12 @@ jobs:
       - name: Terraform Plan
         uses: ./.github/actions/ci/tf-plan
         with:
-          tf_version: ${{ secrets.TF_VERSION || '1.7.0' }}
-          working_dir: ${{ secrets.TF_WORKING_DIR || 'terraform/environments/production' }}
-          tf_state_bucket: ${{ secrets.TF_STATE_BUCKET || 'fiap-soat-tf-backend-oficina-tech' }}
+          tf_version: ${{ vars.TF_VERSION || '1.7.0' }}
+          working_dir: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
+          tf_state_bucket: ${{ vars.TF_STATE_BUCKET || 'fiap-soat-tf-backend-oficina-tech' }}
           aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws_session_token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws_region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+          aws_region: ${{ vars.AWS_REGION || 'us-east-1' }}
           db_password: ${{ secrets.DB_PASSWORD }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
