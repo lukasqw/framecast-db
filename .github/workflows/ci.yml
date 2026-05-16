@@ -81,7 +81,7 @@ jobs:
         with:
           tf_version: ${{ vars.TF_VERSION || '1.7.0' }}
           working_dir: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
-          tf_state_bucket: ${{ vars.TF_STATE_BUCKET }}
+          tf_state_bucket: ${{ vars.TF_STATE_BUCKET || 'fiap-soat-tf-backend-oficina-tech' }}
           aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws_session_token: ${{ secrets.AWS_SESSION_TOKEN }}
