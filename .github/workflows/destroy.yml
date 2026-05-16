@@ -1,4 +1,4 @@
-name: Destroy DB Infrastructure
+﻿name: Destroy DB Infrastructure
 
 on:
   workflow_dispatch:
@@ -17,11 +17,11 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
 
 jobs:
   destroy:
-    name: Destroy — production
+    name: Destroy â€” production
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: production-destroy
@@ -48,15 +48,18 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: ${{ vars.TF_VERSION || '1.7.0' }}
+          terraform_version: ${{ secrets.TF_VERSION || '1.7.0' }}
           terraform_wrapper: false
 
       - name: Terraform Init
-        working-directory: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
-        run: terraform init
+        working-directory: ${{ secrets.TF_WORKING_DIR || 'terraform/environments/production' }}
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="region=${{ env.AWS_REGION }}"
 
       - name: Terraform Destroy
-        working-directory: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
+        working-directory: ${{ secrets.TF_WORKING_DIR || 'terraform/environments/production' }}
         env:
           TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
         run: terraform destroy -auto-approve

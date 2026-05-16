@@ -1,4 +1,4 @@
-name: Deploy
+﻿name: Deploy
 
 on:
   pull_request:
@@ -26,9 +26,9 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
   ENVIRONMENT: ${{ github.event.inputs.environment || 'production' }}
-  # Repository Variables — configure in Settings → Secrets and Variables → Variables
+  # Repository Variables â€” configure in Settings â†’ Secrets and Variables â†’ Variables
   # Required: AWS_REGION, TF_VERSION, TF_WORKING_DIR
   # Optional: TF_WORKING_DIR_STAGING, BASE_BRANCH (default: main), SOURCE_BRANCH (default: develop)
 
@@ -80,12 +80,12 @@ jobs:
         id: apply
         uses: ./.github/actions/deploy/tf-apply
         with:
-          tf_version: ${{ vars.TF_VERSION || '1.7.0' }}
+          tf_version: ${{ secrets.TF_VERSION || '1.7.0' }}
           working_dir: >-
             ${{ env.ENVIRONMENT == 'staging'
-              && (vars.TF_WORKING_DIR_STAGING || 'terraform/environments/staging')
-              || (vars.TF_WORKING_DIR || 'terraform/environments/production') }}
-          tf_state_bucket: ${{ vars.TF_STATE_BUCKET || 'fiap-soat-tf-backend-oficina-tech' }}
+              && (secrets.TF_WORKING_DIR_STAGING || 'terraform/environments/staging')
+              || (secrets.TF_WORKING_DIR || 'terraform/environments/production') }}
+          tf_state_bucket: ${{ secrets.TF_STATE_BUCKET || 'fiap-soat-tf-backend-oficina-tech' }}
           aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws_session_token: ${{ secrets.AWS_SESSION_TOKEN }}
@@ -101,7 +101,7 @@ jobs:
           rds_ms3_endpoint: ${{ steps.apply.outputs.rds_ms3_endpoint }}
           aws_region: ${{ env.AWS_REGION }}
 
-      # Tag is created only after a successful RDS health check — a tag represents
+      # Tag is created only after a successful RDS health check â€” a tag represents
       # exactly what is confirmed running in production. Skipped on workflow_dispatch
       # since that redeploys an existing version without creating a new tag.
       - name: Finalize Release Tag

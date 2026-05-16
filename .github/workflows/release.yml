@@ -1,4 +1,4 @@
-name: Create Release
+﻿name: Create Release
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       release_type:
-        description: "Release type — push auto-detects from conventional commits; this input is only used on workflow_dispatch"
+        description: "Release type â€” push auto-detects from conventional commits; this input is only used on workflow_dispatch"
         required: true
         type: choice
         options:
@@ -46,12 +46,12 @@ jobs:
       # FORCE RESET: deletes orphaned release/* branches (branch exists, no open PR).
       # Triggered manually via workflow_dispatch with force_reset=true.
       # Use when a deploy failed before creating the tag and the branch is stuck.
-      - name: Force Reset — Delete orphaned release branches
+      - name: Force Reset â€” Delete orphaned release branches
         if: github.event.inputs.force_reset == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "::notice::force_reset=true — procurando branches release/* sem PR aberto..."
+          echo "::notice::force_reset=true â€” procurando branches release/* sem PR aberto..."
           BRANCHES=$(gh api "repos/${{ github.repository }}/branches" \
             --jq '.[].name | select(startswith("release/"))' 2>/dev/null || echo "")
 
@@ -62,18 +62,18 @@ jobs:
           for BRANCH in $BRANCHES; do
             HAS_PR=$(gh pr list --base main --head "$BRANCH" --state open --json number --jq 'length' 2>/dev/null || echo "0")
             if [ "$HAS_PR" = "0" ]; then
-              echo "::notice::Deletando branch órfã: $BRANCH"
+              echo "::notice::Deletando branch Ã³rfÃ£: $BRANCH"
               gh api -X DELETE "repos/${{ github.repository }}/git/refs/heads/$BRANCH"
               echo "::notice::Branch $BRANCH deletada."
             else
-              echo "::notice::Branch $BRANCH tem PR aberto — mantendo."
+              echo "::notice::Branch $BRANCH tem PR aberto â€” mantendo."
             fi
           done
 
       # Checks if there is already an open PR from a release/* branch to main.
       # This determines which path the workflow takes:
-      #   - PR exists  → PATH A: sync develop + update changelog
-      #   - No PR      → PATH B: calculate version + create release branch + open draft PR
+      #   - PR exists  â†’ PATH A: sync develop + update changelog
+      #   - No PR      â†’ PATH B: calculate version + create release branch + open draft PR
       - name: Check for Open Release PR
         id: check_pr
         env:
@@ -95,10 +95,10 @@ jobs:
             echo "::notice::Open release PR found: #$PR_NUMBER ($PR_BRANCH)"
           else
             echo "has_open_pr=false" >> $GITHUB_OUTPUT
-            echo "::notice::No open release PR — will create a new release"
+            echo "::notice::No open release PR â€” will create a new release"
           fi
 
-      # PATH A: Release PR already exists → sync develop into the release branch
+      # PATH A: Release PR already exists â†’ sync develop into the release branch
       #         and refresh the PR changelog. Version stays the same.
       - name: Update existing release PR
         if: steps.check_pr.outputs.has_open_pr == 'true'
@@ -107,9 +107,9 @@ jobs:
           pr_number: ${{ steps.check_pr.outputs.pr_number }}
           pr_branch: ${{ steps.check_pr.outputs.pr_branch }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          source_branch: ${{ vars.SOURCE_BRANCH || 'develop' }}
+          source_branch: ${{ secrets.SOURCE_BRANCH || 'develop' }}
 
-      # PATH B: No open PR → detect version, validate guards,
+      # PATH B: No open PR â†’ detect version, validate guards,
       #         create release branch and open a draft PR to main.
       - name: Create new release PR
         if: steps.check_pr.outputs.has_open_pr == 'false'
@@ -118,8 +118,8 @@ jobs:
         with:
           release_type: ${{ github.event.inputs.release_type }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          base_branch: ${{ vars.BASE_BRANCH || 'main' }}
-          source_branch: ${{ vars.SOURCE_BRANCH || 'develop' }}
+          base_branch: ${{ secrets.BASE_BRANCH || 'main' }}
+          source_branch: ${{ secrets.SOURCE_BRANCH || 'develop' }}
 
       - name: Job Summary
         if: always()
