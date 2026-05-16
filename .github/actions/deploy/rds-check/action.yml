@@ -1,12 +1,18 @@
 name: 'Deploy — RDS Health Check'
 description: >
-  Verifies that the RDS instance is in the "available" state after apply.
-  Any failure here prevents the release tag from being created —
-  same pattern as the health checks in oficina-tech and oficina-tech-infra.
+  Verifies that all 3 RDS instances (db_ms1, db_ms2, db_ms3) are in the
+  "available" state after apply. Any failure here prevents the release tag
+  from being created.
 
 inputs:
-  rds_endpoint:
-    description: 'RDS instance endpoint (used to extract the instance identifier)'
+  rds_ms1_endpoint:
+    description: 'RDS endpoint for db_ms1 (ms-identity)'
+    required: true
+  rds_ms2_endpoint:
+    description: 'RDS endpoint for db_ms2 (ms-order-service)'
+    required: true
+  rds_ms3_endpoint:
+    description: 'RDS endpoint for db_ms3 (ms-workshop)'
     required: true
   aws_region:
     description: 'AWS region'
@@ -15,57 +21,59 @@ inputs:
 runs:
   using: composite
   steps:
-    # Retries up to 5 times (60s apart) to handle transitional RDS states
-    # (modifying, backing-up, upgrading) that occur after Terraform apply completes.
-    # Fresh provisioning is always available immediately (Terraform waits for it),
-    # but updates to existing instances can leave the instance in modifying state.
-    - name: Check RDS Status
+    # Checks all 3 RDS instances. Retries up to 5 times (60s apart) to handle
+    # transitional states (modifying, backing-up) that occur after Terraform apply.
+    - name: Check RDS Status — all instances
       shell: bash
       env:
-        RDS_ENDPOINT: ${{ inputs.rds_endpoint }}
+        RDS_MS1: ${{ inputs.rds_ms1_endpoint }}
+        RDS_MS2: ${{ inputs.rds_ms2_endpoint }}
+        RDS_MS3: ${{ inputs.rds_ms3_endpoint }}
         AWS_REGION: ${{ inputs.aws_region }}
       run: |
-        if [ -z "$RDS_ENDPOINT" ]; then
-          echo "::error::RDS endpoint is empty — apply may have failed to provision the instance"
-          exit 1
-        fi
+        check_rds() {
+          local endpoint="$1"
+          local label="$2"
 
-        # Extract instance identifier from endpoint (first segment before the first dot)
-        RDS_ID=$(echo "$RDS_ENDPOINT" | cut -d'.' -f1)
-        echo "::notice::Checking RDS instance: $RDS_ID"
-
-        MAX_RETRIES=5
-        RETRY_DELAY=60
-
-        for i in $(seq 1 $MAX_RETRIES); do
-          STATUS=$(aws rds describe-db-instances \
-            --db-instance-identifier "$RDS_ID" \
-            --region "$AWS_REGION" \
-            --query 'DBInstances[0].DBInstanceStatus' \
-            --output text 2>/dev/null || echo "UNKNOWN")
-
-          echo "Attempt $i/$MAX_RETRIES — RDS status: $STATUS"
-
-          if [ "$STATUS" == "available" ]; then
-            echo "::notice::RDS instance $RDS_ID is available"
-            break
-          fi
-
-          if [ "$i" -lt "$MAX_RETRIES" ]; then
-            echo "::notice::RDS not yet available ($STATUS) — retrying in ${RETRY_DELAY}s"
-            sleep $RETRY_DELAY
-          else
-            echo "::error::RDS instance $RDS_ID is not available after $MAX_RETRIES attempts (last status: $STATUS)"
+          if [ -z "$endpoint" ]; then
+            echo "::error::$label endpoint is empty — apply may have failed to provision the instance"
             exit 1
           fi
-        done
 
-        # Print instance details for the audit trail
-        aws rds describe-db-instances \
-          --db-instance-identifier "$RDS_ID" \
-          --region "$AWS_REGION" \
-          --query 'DBInstances[0].{Engine:Engine,Version:EngineVersion,Class:DBInstanceClass,MultiAZ:MultiAZ,StorageGB:AllocatedStorage}' \
-          --output table
+          local rds_id
+          rds_id=$(echo "$endpoint" | cut -d'.' -f1)
+          echo "::notice::Checking $label ($rds_id)..."
+
+          local max=5 delay=60 status
+          for i in $(seq 1 $max); do
+            status=$(aws rds describe-db-instances \
+              --db-instance-identifier "$rds_id" \
+              --region "$AWS_REGION" \
+              --query 'DBInstances[0].DBInstanceStatus' \
+              --output text 2>/dev/null || echo "UNKNOWN")
+
+            echo "  Attempt $i/$max — $label status: $status"
+
+            if [ "$status" = "available" ]; then
+              echo "::notice::$label ($rds_id) is available"
+              return 0
+            fi
+
+            if [ "$i" -lt "$max" ]; then
+              echo "::notice::$label not yet available ($status) — retrying in ${delay}s"
+              sleep $delay
+            else
+              echo "::error::$label ($rds_id) is not available after $max attempts (last status: $status)"
+              exit 1
+            fi
+          done
+        }
+
+        check_rds "$RDS_MS1" "db_ms1"
+        check_rds "$RDS_MS2" "db_ms2"
+        check_rds "$RDS_MS3" "db_ms3"
+
+        echo "::notice::All 3 RDS instances are available"
 
     - name: Health Check Summary
       if: always()
@@ -74,12 +82,14 @@ runs:
         {
           echo "## RDS Health Check"
           echo ""
-          echo "| Check | Status |"
-          echo "|-------|--------|"
-          echo "| RDS Status | ${{ job.status }} |"
+          echo "| Instance | Endpoint |"
+          echo "|----------|----------|"
+          echo "| db_ms1 (ms-identity) | \`${{ inputs.rds_ms1_endpoint }}\` |"
+          echo "| db_ms2 (ms-order) | \`${{ inputs.rds_ms2_endpoint }}\` |"
+          echo "| db_ms3 (ms-workshop) | \`${{ inputs.rds_ms3_endpoint }}\` |"
           echo ""
-          echo "| Resource | Value |"
-          echo "|----------|-------|"
-          echo "| Endpoint | \`${{ inputs.rds_endpoint }}\` |"
+          echo "| | |"
+          echo "|---|---|"
           echo "| Region | \`${{ inputs.aws_region }}\` |"
+          echo "| Status | ${{ job.status }} |"
         } >> $GITHUB_STEP_SUMMARY

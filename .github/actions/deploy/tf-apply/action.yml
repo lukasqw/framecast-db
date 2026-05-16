@@ -41,15 +41,15 @@ inputs:
     default: ''
 
 outputs:
-  rds_endpoint:
-    description: 'RDS instance endpoint'
-    value: ${{ steps.outputs.outputs.rds_endpoint }}
-  rds_port:
-    description: 'RDS instance port'
-    value: ${{ steps.outputs.outputs.rds_port }}
-  rds_database:
-    description: 'RDS database name'
-    value: ${{ steps.outputs.outputs.rds_database }}
+  rds_ms1_endpoint:
+    description: 'RDS endpoint — db_ms1 (ms-identity)'
+    value: ${{ steps.outputs.outputs.rds_ms1_endpoint }}
+  rds_ms2_endpoint:
+    description: 'RDS endpoint — db_ms2 (ms-order-service)'
+    value: ${{ steps.outputs.outputs.rds_ms2_endpoint }}
+  rds_ms3_endpoint:
+    description: 'RDS endpoint — db_ms3 (ms-workshop)'
+    value: ${{ steps.outputs.outputs.rds_ms3_endpoint }}
 
 runs:
   using: composite
@@ -145,12 +145,12 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working_dir }}
       run: |
-        RDS_ENDPOINT=$(terraform output -raw rds_endpoint 2>/dev/null || echo "")
-        RDS_PORT=$(terraform output -raw rds_port 2>/dev/null || echo "5432")
-        RDS_DATABASE=$(terraform output -raw rds_database_name 2>/dev/null || echo "")
+        RDS_MS1=$(terraform output -raw rds_ms1_address 2>/dev/null || echo "")
+        RDS_MS2=$(terraform output -raw rds_ms2_address 2>/dev/null || echo "")
+        RDS_MS3=$(terraform output -raw rds_ms3_address 2>/dev/null || echo "")
 
-        echo "rds_endpoint=$RDS_ENDPOINT" >> $GITHUB_OUTPUT
-        echo "rds_port=$RDS_PORT"         >> $GITHUB_OUTPUT
-        echo "rds_database=$RDS_DATABASE" >> $GITHUB_OUTPUT
+        echo "rds_ms1_endpoint=$RDS_MS1" >> $GITHUB_OUTPUT
+        echo "rds_ms2_endpoint=$RDS_MS2" >> $GITHUB_OUTPUT
+        echo "rds_ms3_endpoint=$RDS_MS3" >> $GITHUB_OUTPUT
 
-        echo "::notice::RDS: $RDS_ENDPOINT:$RDS_PORT/$RDS_DATABASE"
+        echo "::notice::db_ms1: $RDS_MS1 | db_ms2: $RDS_MS2 | db_ms3: $RDS_MS3"

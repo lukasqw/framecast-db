@@ -96,7 +96,9 @@ jobs:
       - name: RDS Health Check
         uses: ./.github/actions/deploy/rds-check
         with:
-          rds_endpoint: ${{ steps.apply.outputs.rds_endpoint }}
+          rds_ms1_endpoint: ${{ steps.apply.outputs.rds_ms1_endpoint }}
+          rds_ms2_endpoint: ${{ steps.apply.outputs.rds_ms2_endpoint }}
+          rds_ms3_endpoint: ${{ steps.apply.outputs.rds_ms3_endpoint }}
           aws_region: ${{ env.AWS_REGION }}
 
       # Tag is created only after a successful RDS health check — a tag represents
