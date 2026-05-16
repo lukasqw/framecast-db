@@ -104,7 +104,6 @@ module "rds" {
     {
       Microservice = each.key
       Database     = each.value.database_name
-      Description  = each.value.description
     }
   )
 }
