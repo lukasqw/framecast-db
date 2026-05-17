@@ -1,273 +1,265 @@
-# Oficina Tech - Database Infrastructure
+# oficina-tech-db
 
-Infraestrutura de banco de dados PostgreSQL para o projeto Oficina Tech, provisionada e gerenciada através de Terraform na AWS.
+Infraestrutura de dados da plataforma Oficina Tech. Provisiona via Terraform 3 instâncias RDS PostgreSQL 16 independentes (uma por microsserviço) e 1 tabela DynamoDB para histórico de ordens de serviço.
 
-## Descrição
+## O que este repo provisiona
 
-Este repositório contém a infraestrutura como código (IaC) para provisionar e gerenciar o banco de dados PostgreSQL RDS utilizado pelo sistema Oficina Tech. A infraestrutura é totalmente automatizada usando Terraform e inclui configurações de segurança, backup, monitoramento e integração com o cluster EKS.
+| Recurso | Identificador AWS | Microsserviço | Banco / Tabela |
+|---|---|---|---|
+| RDS PostgreSQL 16 | `<project>-ms1` | ms-identity | `db_ms1` |
+| RDS PostgreSQL 16 | `<project>-ms2` | ms-order-service | `db_ms2` |
+| RDS PostgreSQL 16 | `<project>-ms3` | ms-workshop | `db_ms3` |
+| DynamoDB | `order_history` | ms-order-service | histórico de status das OS |
+| Security Group | `<project>-rds-sg` | compartilhado | regras de acesso ao PostgreSQL |
 
-O banco de dados é provisionado na AWS RDS com PostgreSQL 16, configurado para alta disponibilidade através de Multi-AZ deployment, com backups automatizados e monitoramento via CloudWatch.
+O módulo RDS é instanciado com `for_each = local.databases`, criando as 3 instâncias a partir de uma única definição. Migrar de instância única para `for_each` destrói e recria recursos — fazer backup antes de aplicar em ambiente existente.
 
-## Estrutura de Pastas
+## Instâncias RDS
+
+As 3 instâncias compartilham os mesmos parâmetros (variáveis globais em `variables.tf`):
+
+| Parâmetro | Valor padrão |
+|---|---|
+| Engine | PostgreSQL |
+| `engine_version` | `16` |
+| `instance_class` | `db.t3.micro` |
+| `allocated_storage` | 20 GB |
+| `max_allocated_storage` | 100 GB (autoscaling) |
+| `storage_type` | `gp3` |
+| `storage_encrypted` | `true` |
+| `multi_az` | `false` |
+| `backup_retention_period` | 1 dia |
+| `backup_window` | `03:00–04:00` |
+| `maintenance_window` | `sun:04:00–sun:05:00` |
+| `port` | `5432` |
+| `publicly_accessible` | `false` |
+| `deletion_protection` | `false` |
+| `skip_final_snapshot` | `true` |
+| `enabled_cloudwatch_logs_exports` | `["postgresql", "upgrade"]` |
+| `performance_insights_enabled` | `false` |
+| `rds.force_ssl` (parameter group) | `0` |
+
+Cada instância recebe identifier, database_name e username individuais definidos no mapa `local.databases` em `locals.tf`:
+
+| Chave | identifier | database_name | username |
+|---|---|---|---|
+| `ms1` | `<project_name>-ms1` | `db_ms1` | `postgres` |
+| `ms2` | `<project_name>-ms2` | `db_ms2` | `postgres` |
+| `ms3` | `<project_name>-ms3` | `db_ms3` | `postgres` |
+
+A senha (`var.db_password`) é compartilhada entre as 3 instâncias e deve ser fornecida via `terraform.tfvars` ou variável de ambiente `TF_VAR_db_password`.
+
+## DynamoDB
+
+| Atributo | Valor |
+|---|---|
+| Nome da tabela | `order_history` (configurável via `var.dynamodb_order_history_table`) |
+| Billing mode | `PAY_PER_REQUEST` |
+| Partition key | `order_id` (tipo `S` — UUID da OS) |
+| Sort key | `occurred_at` (tipo `S` — ISO 8601, garante ordenação cronológica) |
+| TTL | desabilitado (histórico mantido indefinidamente) |
+
+## Secrets Manager
+
+As senhas do RDS são armazenadas no AWS Secrets Manager pelos microsserviços consumidores. O backend Go de cada microsserviço consome a connection string do Secrets Manager — nunca hardcoded. Este repo não cria os secrets diretamente: a senha é passada via variável `db_password` e os microsserviços são responsáveis por armazená-la no Secrets Manager durante seu próprio deploy.
+
+## Security Group
+
+Um único Security Group (`<project>-rds-sg`) é compartilhado pelas 3 instâncias RDS. Regras de entrada (`ingress`):
+
+| Origem | Protocolo | Porta | Descrição |
+|---|---|---|---|
+| `local.eks_security_group_id` (SG do módulo security-groups da infra) | TCP | 5432 | PostgreSQL from EKS cluster security group |
+| `local.eks_cluster_security_group_id` (SG auto-criado pelo EKS) | TCP | 5432 | PostgreSQL from EKS cluster nodes |
+| `data.aws_vpc.main.cidr_block` (`172.31.0.0/16`) | TCP | 5432 | PostgreSQL from VPC CIDR (allows all pods to connect) |
+
+Regra de saída (`egress`):
+
+| Destino | Protocolo | Descrição |
+|---|---|---|
+| `0.0.0.0/0` | `-1` (all) | Allow all outbound traffic |
+
+## Módulos Terraform
 
 ```
-oficina-tech-db/
-├── .github/
-│   └── workflows/          # Pipelines CI/CD
-│       ├── ci.yml          # Validação do Terraform
-│       └── deploy.yml      # Deploy da infraestrutura
-├── docs/
-│   └── database-component-diagram.puml  # Diagrama de componentes
-├── terraform/
-│   ├── environments/       # Configurações por ambiente
-│   │   └── production/     # Ambiente de produção
-│   │       ├── backend.tf      # Configuração do backend S3
-│   │       ├── data.tf         # Data sources (VPC, subnets)
-│   │       ├── locals.tf       # Variáveis locais
-│   │       ├── main.tf         # Recursos principais
-│   │       ├── outputs.tf      # Outputs do Terraform
-│   │       ├── provider.tf     # Configuração do provider AWS
-│   │       └── variables.tf    # Variáveis de entrada
-│   └── modules/
-│       └── rds/            # Módulo RDS PostgreSQL
-│           ├── main.tf         # Recursos do RDS
-│           ├── outputs.tf      # Outputs do módulo
-│           └── variables.tf    # Variáveis do módulo
-├── .gitignore
-├── Makefile                # Comandos para gerenciar Terraform
-└── README.md
+terraform/
+├── modules/
+│   └── rds/                  módulo reutilizável, instanciado via for_each
+│       ├── main.tf           aws_db_parameter_group, aws_db_subnet_group, aws_db_instance
+│       ├── variables.tf      todas as variáveis de configuração do módulo
+│       └── outputs.tf        db_instance_id/arn/endpoint/address/port/name/username, subnet_group
+└── environments/
+    └── production/
+        ├── backend.tf        S3 remote state (key: fiap/db/terraform.tfstate)
+        ├── data.tf           remote state infra, aws_vpc (172.31.0.0/16), subnets
+        ├── locals.tf         mapa databases{ms1,ms2,ms3}, filtered_subnet_ids, SG IDs do EKS
+        ├── main.tf           module.rds (for_each), aws_security_group.rds, regras ingress/egress, aws_dynamodb_table.order_history
+        ├── outputs.tf        rds_ms1/ms2/ms3_*, dynamodb_order_history_*, rds_security_group_id
+        ├── provider.tf       hashicorp/aws ~> 5.0
+        └── variables.tf      db_password, rds_*, dynamodb_*, tf_state_bucket, aws_region, project_name, environment
 ```
 
-## Funcionalidades
+## Variáveis Terraform
 
-### Infraestrutura de Banco de Dados
+Arquivo: `terraform/environments/production/variables.tf`
 
-- **RDS PostgreSQL 16**: Instância gerenciada do PostgreSQL na AWS
-- **Instância db.t3.micro**: Configuração otimizada para custos
-- **Storage**: 20GB gp2 com auto-scaling configurável
-- **Multi-AZ Deployment**: Suporte para alta disponibilidade (configurável)
+| Variável | Tipo | Padrão | Sensível | Descrição |
+|---|---|---|---|---|
+| `aws_region` | `string` | `us-east-1` | não | Região AWS |
+| `project_name` | `string` | `EKS-OFICINA-TECH` | não | Nome do projeto (compõe os identifiers do RDS) |
+| `environment` | `string` | `production` | não | Ambiente (production, staging, development) |
+| `db_password` | `string` | — | sim | Senha compartilhada pelas 3 instâncias RDS |
+| `rds_engine_version` | `string` | `16` | não | Versão do PostgreSQL |
+| `rds_instance_class` | `string` | `db.t3.micro` | não | Classe da instância RDS |
+| `rds_allocated_storage` | `number` | `20` | não | Storage alocado em GB |
+| `rds_backup_retention_period` | `number` | `1` | não | Período de retenção de backup em dias |
+| `rds_multi_az` | `bool` | `false` | não | Habilitar Multi-AZ |
+| `rds_skip_final_snapshot` | `bool` | `true` | não | Pular snapshot final ao destruir |
+| `rds_deletion_protection` | `bool` | `false` | não | Habilitar proteção contra deleção |
+| `dynamodb_order_history_table` | `string` | `order_history` | não | Nome da tabela DynamoDB |
+| `tf_state_bucket` | `string` | `fiap-soat-tf-backend-oficina-tech` | não | Bucket S3 do Terraform state (sobrescrito no CI via TF_STATE_BUCKET) |
 
-### Segurança
+## Outputs Terraform
 
-- **Security Groups**: Controle de acesso granular
-  - Acesso do cluster EKS (security group do EKS)
-  - Acesso dos nodes do cluster (cluster security group)
-  - Acesso da VPC (permite conexões dos pods)
-- **Subnet Groups**: Deployment em múltiplas zonas de disponibilidade
-- **Parameter Groups**: Configurações customizadas do PostgreSQL
-- **SSL**: Configurável (desabilitado em desenvolvimento)
+Arquivo: `terraform/environments/production/outputs.tf`
 
-### Backup e Recuperação
+Estes outputs são consumidos pelos microsserviços e pelo pipeline CI/CD da action `tf-apply`.
 
-- **Backups Automatizados**: Retenção configurável (padrão: 1 dia)
-- **Snapshots Manuais**: Suporte para snapshots sob demanda
-- **Point-in-Time Recovery**: Recuperação para qualquer momento dentro do período de retenção
-- **Final Snapshot**: Snapshot automático antes da destruição (configurável)
+| Output | Sensível | Descrição |
+|---|---|---|
+| `rds_ms1_address` | sim | Host do RDS db_ms1 (ms-identity) |
+| `rds_ms1_port` | não | Porta do RDS db_ms1 |
+| `rds_ms1_database_name` | não | Nome do banco: `db_ms1` |
+| `rds_ms1_username` | sim | Usuário do banco db_ms1 |
+| `rds_ms2_address` | sim | Host do RDS db_ms2 (ms-order-service) |
+| `rds_ms2_port` | não | Porta do RDS db_ms2 |
+| `rds_ms2_database_name` | não | Nome do banco: `db_ms2` |
+| `rds_ms2_username` | sim | Usuário do banco db_ms2 |
+| `rds_ms3_address` | sim | Host do RDS db_ms3 (ms-workshop) |
+| `rds_ms3_port` | não | Porta do RDS db_ms3 |
+| `rds_ms3_database_name` | não | Nome do banco: `db_ms3` |
+| `rds_ms3_username` | sim | Usuário do banco db_ms3 |
+| `dynamodb_order_history_table_name` | não | Nome da tabela DynamoDB (`order_history`) |
+| `dynamodb_order_history_table_arn` | não | ARN da tabela DynamoDB |
+| `rds_security_group_id` | não | ID do Security Group compartilhado pelas 3 instâncias |
+| `aws_region` | não | Região AWS utilizada |
 
-### Monitoramento
+## Dependências de remote state
 
-- **CloudWatch Logs**: Logs do PostgreSQL exportados automaticamente
-- **Performance Insights**: Monitoramento de performance habilitado
-- **Métricas**: CPU, conexões, storage, IOPS
-- **Alertas**: Integração com CloudWatch para alertas customizados
+O `data.tf` consome o remote state do repo `oficina-tech-infra`:
 
-### Integração
+```hcl
+data "terraform_remote_state" "infra" {
+  backend = "s3"
+  config = {
+    bucket = var.tf_state_bucket
+    key    = "fiap/infra/terraform.tfstate"
+    region = var.aws_region
+  }
+}
+```
 
-- **EKS Cluster**: Conectividade configurada com o cluster Kubernetes
-- **Lambda Functions**: Suporte para funções Lambda (ex: CPF Auth)
-- **Remote State**: Importa recursos do projeto oficina-tech-infra
-- **VPC Integration**: Deployment dentro da VPC existente
+Outputs do `oficina-tech-infra` utilizados:
 
-### CI/CD
+| Output consumido | Usado em |
+|---|---|
+| `eks_security_group_id` | `local.eks_security_group_id` → regra ingress `rds_from_eks` |
+| `eks_cluster_security_group_id` | `local.eks_cluster_security_group_id` → regra ingress `rds_from_eks_cluster_nodes` |
 
-- **Validação Automática**: Terraform format e validate em PRs
-- **Deploy Automatizado**: Deploy automático na branch main
-- **Post-Deploy Checks**: Verificação do status do RDS após deploy
-- **GitHub Actions**: Pipelines completos de CI/CD
+Nunca renomear esses outputs no `oficina-tech-infra` sem atualizar `locals.tf` neste repo.
 
-## Tecnologias Usadas
-
-- **Terraform** (v1.7.0): Infraestrutura como código
-- **AWS RDS**: Serviço de banco de dados gerenciado
-- **PostgreSQL** (v16): Sistema de gerenciamento de banco de dados
-- **AWS CloudWatch**: Monitoramento e logs
-- **AWS S3**: Backend para Terraform state
-- **GitHub Actions**: CI/CD e automação
-- **PlantUML**: Documentação de arquitetura
-
-### Recursos AWS
-
-- AWS RDS (PostgreSQL)
-- AWS VPC
-- AWS Security Groups
-- AWS Subnet Groups
-- AWS Parameter Groups
-- AWS CloudWatch
-- AWS S3 (snapshots e state)
-
-## Como Rodar o Projeto
+## Como fazer deploy
 
 ### Pré-requisitos
 
-- [Terraform](https://www.terraform.io/downloads) >= 1.7.0
-- [AWS CLI](https://aws.amazon.com/cli/) configurado
-- Credenciais AWS com permissões adequadas
-- Acesso ao remote state do projeto `oficina-tech-infra`
-- Make (opcional, para usar os comandos do Makefile)
+- Terraform >= 1.0
+- AWS CLI configurado com credenciais válidas
+- Remote state do `oficina-tech-infra` aplicado (EKS e Security Groups devem existir)
+- Acesso ao bucket S3 do Terraform state
 
-### Configuração Inicial
-
-1. Clone o repositório:
+### Deploy manual
 
 ```bash
-git clone <repository-url>
-cd oficina-tech-db
-```
-
-2. Configure as credenciais AWS:
-
-```bash
-aws configure
-```
-
-3. Crie um arquivo de variáveis (não commitado):
-
-```bash
-# terraform/environments/production/terraform.tfvars
-db_password = "sua-senha-segura"
-```
-
-### Usando Makefile
-
-O projeto inclui um Makefile para facilitar operações comuns:
-
-```bash
-# Inicializar Terraform
-make init
-
-# Visualizar mudanças planejadas
-make plan
-
-# Aplicar mudanças
-make apply
-
-# Destruir infraestrutura
-make destroy
-
-# Formatar código Terraform
-make fmt
-
-# Validar configuração
-make validate
-```
-
-### Usando Terraform Diretamente
-
-```bash
-# Navegar para o ambiente
 cd terraform/environments/production
 
-# Inicializar
-terraform init
+# Inicializar com o bucket de state correto
+terraform init -backend-config="bucket=<TF_STATE_BUCKET>" -backend-config="region=us-east-1"
 
-# Planejar mudanças
-terraform plan
+# Planejar com senha do banco
+terraform plan -var="db_password=<senha>"
 
-# Aplicar mudanças
-terraform apply
+# Aplicar
+terraform apply -var="db_password=<senha>"
 
-# Ver outputs
+# Verificar outputs
 terraform output
 ```
 
-### Variáveis de Ambiente
+Nunca commitar `terraform.tfvars` com senha. Use a variável de ambiente `TF_VAR_db_password` para evitar exposição em histórico de shell.
 
-Para diferentes ambientes, use a variável `ENV`:
+### Adicionar ou remover instância RDS
 
-```bash
-# Produção (padrão)
-make plan ENV=production
+Editar o mapa `databases` em `locals.tf`. Alterar a chave (`ms1`, `ms2`, `ms3`) destrói e recria a instância — usar `terraform state mv` antes do `apply` para renomear sem destruição.
 
-# Outros ambientes (quando configurados)
-make plan ENV=staging
+## CI/CD
+
+### Workflows
+
+| Workflow | Gatilho | Descrição |
+|---|---|---|
+| `ci.yml` | PR para `develop`/`main` (paths: `terraform/**`), push em `develop` | Validação: fmt check, init, validate, tfsec, checkov, terraform plan |
+| `release.yml` | Push em `develop` (paths: `terraform/**`), `workflow_dispatch` | Cria ou atualiza PR de release com versão calculada por Conventional Commits |
+| `deploy.yml` | PR de `release/*` mergeado em `main`, `workflow_dispatch` | Terraform apply, RDS health check, finaliza tag de release |
+| `destroy.yml` | `workflow_dispatch` (confirmação manual) | Terraform destroy |
+| `rollback.yml` | `workflow_dispatch` (versão + ambiente) | Aplica Terraform de uma tag anterior sem criar nova tag |
+
+### Composite Actions
+
+```
+.github/actions/
+├── ci/
+│   ├── tf-validate/    fmt check + terraform init (sem backend) + validate
+│   ├── tf-security/    tfsec + checkov + upload SARIF para o Security tab
+│   ├── tf-plan/        terraform plan + upload artifact + comentário no PR
+│   └── tf-structure/   verifica arquivos obrigatórios e estrutura de módulos
+├── release/
+│   ├── create-pr/      calcula versão (feat: → minor, feat!: → major, demais → patch), cria branch e draft PR
+│   ├── update-pr/      sincroniza branch de release com develop e atualiza changelog
+│   └── finalize-tag/   cria tag anotada após health check confirmado em produção
+└── deploy/
+    ├── tf-apply/       terraform init + apply + exporta rds_ms1/ms2/ms3_address como outputs
+    └── rds-check/      verifica status "available" das 3 instâncias via AWS CLI; falha aqui impede criação da tag
 ```
 
-### Outputs Importantes
+### Fluxo de deploy
 
-Após o deploy, você pode obter informações importantes:
-
-```bash
-terraform output rds_endpoint        # Endpoint do banco de dados
-terraform output rds_port            # Porta do banco de dados
-terraform output rds_database_name   # Nome do banco de dados
-terraform output rds_username        # Usuário do banco de dados
+```
+push em develop (terraform/**)
+        |
+        v
+  [release.yml] — cria ou atualiza PR de release
+        |
+  merge PR em main
+        |
+        v
+   [deploy.yml]
+        |
+        v
+   tf-apply  (terraform apply)
+        |
+        v
+   rds-check (aws rds describe-db-instances — aguarda status "available" nas 3 instâncias)
+        |
+        v
+   finalize-tag (tag anotada criada somente após health check confirmado)
 ```
 
-### Conectando ao Banco de Dados
+### Secrets e variáveis necessários no GitHub
 
-```bash
-# Obter endpoint
-RDS_ENDPOINT=$(terraform output -raw rds_endpoint)
-
-# Conectar via psql (de dentro da VPC ou através de bastion)
-psql -h $RDS_ENDPOINT -U postgres -d eks_oficina_tech
-```
-
-### CI/CD via GitHub Actions
-
-O projeto possui pipelines automatizados:
-
-- **Pull Requests**: Validação automática do código Terraform
-- **Push para main**: Deploy automático da infraestrutura
-- **Manual Trigger**: Deploy sob demanda via workflow_dispatch
-
-### Secrets Necessários no GitHub
-
-Configure os seguintes secrets no repositório:
-
-- `AWS_ACCESS_KEY_ID`: Access key da AWS
-- `AWS_SECRET_ACCESS_KEY`: Secret key da AWS
-- `AWS_SESSION_TOKEN`: Session token (se aplicável)
-- `DB_PASSWORD`: Senha do banco de dados
-
-## Manutenção
-
-### Backups
-
-Os backups são automáticos, mas você pode criar snapshots manuais:
-
-```bash
-aws rds create-db-snapshot \
-  --db-instance-identifier eks-oficina-tech-db \
-  --db-snapshot-identifier manual-snapshot-$(date +%Y%m%d)
-```
-
-### Monitoramento
-
-Acesse o CloudWatch para visualizar métricas e logs:
-
-```bash
-aws rds describe-db-instances \
-  --db-instance-identifier eks-oficina-tech-db \
-  --query 'DBInstances[0].[DBInstanceStatus,Engine,EngineVersion]'
-```
-
-### Atualizações
-
-Para atualizar a versão do PostgreSQL ou configurações:
-
-1. Modifique as variáveis em `variables.tf`
-2. Execute `terraform plan` para revisar mudanças
-3. Execute `terraform apply` para aplicar
-
-## Segurança
-
-- Nunca commite arquivos `.tfvars` com senhas
-- Use AWS Secrets Manager para senhas em produção
-- Habilite SSL em produção (`rds.force_ssl = 1`)
-- Configure deletion protection em produção
-- Revise security groups regularmente
-
-## Licença
-
-Este projeto faz parte do sistema Oficina Tech.
+| Nome | Tipo | Descrição |
+|---|---|---|
+| `AWS_ACCESS_KEY_ID` | Secret | Access key da AWS |
+| `AWS_SECRET_ACCESS_KEY` | Secret | Secret key da AWS |
+| `AWS_SESSION_TOKEN` | Secret | Session token (AWS Academy) |
+| `DB_PASSWORD` | Secret | Senha compartilhada pelas 3 instâncias RDS |
+| `TF_STATE_BUCKET` | Variable | Nome do bucket S3 para o Terraform state |
