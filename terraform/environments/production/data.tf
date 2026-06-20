@@ -3,7 +3,7 @@ data "terraform_remote_state" "infra" {
   backend = "s3"
   config = {
     bucket = var.tf_state_bucket
-    key    = "fiap/infra/terraform.tfstate"
+    key    = "framecast/infra/terraform.tfstate"
     region = var.aws_region
   }
 }

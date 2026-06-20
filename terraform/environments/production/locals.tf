@@ -1,24 +1,16 @@
 # Local Values
 
 locals {
-  # ─── Configuração por microsserviço ────────────────────────────────────────
-  # Cada entrada cria uma instância RDS independente.
-  # O identifier deve ser único globalmente na conta AWS por região.
+  # ─── Configuração do banco ─────────────────────────────────────────────────
+  # for_each preservado com UMA entrada: mantém o padrão arquitetural do repo
+  # base e permite adicionar bancos no futuro editando este mapa.
+  # ATENÇÃO: a chave "framecast" compõe o identifier — mudá-la destrói/recria
+  # a instância (usar `terraform state mv` para renomear sem perda de dados).
   databases = {
-    ms1 = {
-      identifier    = "${lower(var.project_name)}-ms1"
-      database_name = "db_ms1"
-      username      = "postgres"
-    }
-    ms2 = {
-      identifier    = "${lower(var.project_name)}-ms2"
-      database_name = "db_ms2"
-      username      = "postgres"
-    }
-    ms3 = {
-      identifier    = "${lower(var.project_name)}-ms3"
-      database_name = "db_ms3"
-      username      = "postgres"
+    framecast = {
+      identifier    = "${lower(var.project_name)}-db" # framecast-db
+      database_name = var.db_name                     # framecast_db
+      username      = var.db_username                 # framecast
     }
   }
 
@@ -38,6 +30,7 @@ locals {
     Project     = var.project_name
     Environment = var.environment
     ManagedBy   = "Terraform"
-    Repository  = "oficina-tech-db"
+    Repository  = "framecast-db"
+    application = "framecast"
   }
 }

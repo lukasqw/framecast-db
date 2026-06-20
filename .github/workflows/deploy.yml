@@ -86,7 +86,7 @@ jobs:
             ${{ env.ENVIRONMENT == 'staging'
               && (vars.TF_WORKING_DIR_STAGING || 'terraform/environments/staging')
               || (vars.TF_WORKING_DIR || 'terraform/environments/production') }}
-          tf_state_bucket: ${{ vars.TF_STATE_BUCKET || 'fiap-soat-tf-backend-oficina-tech' }}
+          tf_state_bucket: ${{ vars.TF_STATE_BUCKET || 'fiap-soat-tf-backend-framecast' }}
           aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws_session_token: ${{ secrets.AWS_SESSION_TOKEN }}
@@ -97,9 +97,7 @@ jobs:
       - name: RDS Health Check
         uses: ./.github/actions/deploy/rds-check
         with:
-          rds_ms1_endpoint: ${{ steps.apply.outputs.rds_ms1_endpoint }}
-          rds_ms2_endpoint: ${{ steps.apply.outputs.rds_ms2_endpoint }}
-          rds_ms3_endpoint: ${{ steps.apply.outputs.rds_ms3_endpoint }}
+          rds_endpoint: ${{ steps.apply.outputs.rds_endpoint }}
           aws_region: ${{ env.AWS_REGION }}
 
       # Tag is created only after a successful RDS health check â€” a tag represents
@@ -122,8 +120,7 @@ jobs:
             echo "| Version | \`${{ steps.version.outputs.VERSION }}\` |"
             echo "| Environment | \`${{ env.ENVIRONMENT }}\` |"
             echo "| RDS Endpoint | \`${{ steps.apply.outputs.rds_endpoint }}\` |"
-            echo "| RDS Port | \`${{ steps.apply.outputs.rds_port }}\` |"
-            echo "| Database | \`${{ steps.apply.outputs.rds_database }}\` |"
+            echo "| Database | \`framecast_db\` |"
             echo "| Region | \`${{ env.AWS_REGION }}\` |"
             echo ""
             echo "| | |"

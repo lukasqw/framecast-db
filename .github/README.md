@@ -44,13 +44,13 @@ push to develop (terraform/**)
 │   ├── tf-security/    tfsec + checkov + upload SARIF
 │   ├── tf-plan/        terraform plan + upload artifact + comentário no PR
 │   └── tf-structure/   verifica arquivos obrigatórios e estrutura de módulos
-├── release/            ← idêntico ao oficina-tech (copiado sem alterações)
+├── release/            ← fluxo de release por Conventional Commits
 │   ├── create-pr/      Calcula versão (conventional commits), cria branch e draft PR
 │   ├── update-pr/      Sincroniza branch de release com develop e atualiza changelog
 │   └── finalize-tag/   Cria tag anotada após health check confirmado em produção
 └── deploy/
-    ├── tf-apply/       init + terraform apply + get RDS outputs
-    └── rds-check/      Verifica status "available" do RDS via AWS CLI
+    ├── tf-apply/       init + terraform apply + exporta rds_address
+    └── rds-check/      Verifica status "available" da instância framecast_db via AWS CLI
 ```
 
 ## Configuração por repositório
@@ -78,7 +78,7 @@ Veja [`variables.env.example`](variables.env.example) para a lista completa.
 
 ## Versionamento
 
-Idêntico ao `oficina-tech` — versão calculada automaticamente via [Conventional Commits](https://www.conventionalcommits.org):
+Versão calculada automaticamente via [Conventional Commits](https://www.conventionalcommits.org):
 
 | Padrão de commit | Bump |
 |---|---|
@@ -88,4 +88,4 @@ Idêntico ao `oficina-tech` — versão calculada automaticamente via [Conventio
 
 ## Tag de release
 
-A tag só é criada **após** o `rds-check` confirmar que a instância RDS está `available` em produção — mesmo padrão do `oficina-tech` e `oficina-tech-infra`.
+A tag só é criada **após** o `rds-check` confirmar que a instância `framecast_db` está `available` em produção — mesmo padrão do `framecast-infra`.

@@ -1,18 +1,11 @@
 name: 'Deploy — RDS Health Check'
 description: >
-  Verifies that all 3 RDS instances (db_ms1, db_ms2, db_ms3) are in the
-  "available" state after apply. Any failure here prevents the release tag
-  from being created.
+  Verifies that the framecast_db RDS instance is in the "available" state
+  after apply. Any failure here prevents the release tag from being created.
 
 inputs:
-  rds_ms1_endpoint:
-    description: 'RDS endpoint for db_ms1 (ms-identity)'
-    required: true
-  rds_ms2_endpoint:
-    description: 'RDS endpoint for db_ms2 (ms-order-service)'
-    required: true
-  rds_ms3_endpoint:
-    description: 'RDS endpoint for db_ms3 (ms-workshop)'
+  rds_endpoint:
+    description: 'RDS address for framecast_db'
     required: true
   aws_region:
     description: 'AWS region'
@@ -21,59 +14,45 @@ inputs:
 runs:
   using: composite
   steps:
-    # Checks all 3 RDS instances. Retries up to 5 times (60s apart) to handle
-    # transitional states (modifying, backing-up) that occur after Terraform apply.
-    - name: Check RDS Status — all instances
+    # Retries up to 5 times (60s apart) to handle transitional states
+    # (modifying, backing-up) that occur right after Terraform apply.
+    - name: Check RDS Status
       shell: bash
       env:
-        RDS_MS1: ${{ inputs.rds_ms1_endpoint }}
-        RDS_MS2: ${{ inputs.rds_ms2_endpoint }}
-        RDS_MS3: ${{ inputs.rds_ms3_endpoint }}
+        RDS_ADDR: ${{ inputs.rds_endpoint }}
         AWS_REGION: ${{ inputs.aws_region }}
       run: |
-        check_rds() {
-          local endpoint="$1"
-          local label="$2"
+        if [ -z "$RDS_ADDR" ]; then
+          echo "::error::framecast_db endpoint is empty — apply may have failed to provision the instance"
+          exit 1
+        fi
 
-          if [ -z "$endpoint" ]; then
-            echo "::error::$label endpoint is empty — apply may have failed to provision the instance"
-            exit 1
+        rds_id=$(echo "$RDS_ADDR" | cut -d'.' -f1)
+        echo "::notice::Checking framecast_db ($rds_id)..."
+
+        max=5; delay=60
+        for i in $(seq 1 $max); do
+          status=$(aws rds describe-db-instances \
+            --db-instance-identifier "$rds_id" \
+            --region "$AWS_REGION" \
+            --query 'DBInstances[0].DBInstanceStatus' \
+            --output text 2>/dev/null || echo "UNKNOWN")
+
+          echo "  Attempt $i/$max — framecast_db status: $status"
+
+          if [ "$status" = "available" ]; then
+            echo "::notice::framecast_db ($rds_id) is available"
+            exit 0
           fi
 
-          local rds_id
-          rds_id=$(echo "$endpoint" | cut -d'.' -f1)
-          echo "::notice::Checking $label ($rds_id)..."
-
-          local max=5 delay=60 status
-          for i in $(seq 1 $max); do
-            status=$(aws rds describe-db-instances \
-              --db-instance-identifier "$rds_id" \
-              --region "$AWS_REGION" \
-              --query 'DBInstances[0].DBInstanceStatus' \
-              --output text 2>/dev/null || echo "UNKNOWN")
-
-            echo "  Attempt $i/$max — $label status: $status"
-
-            if [ "$status" = "available" ]; then
-              echo "::notice::$label ($rds_id) is available"
-              return 0
-            fi
-
-            if [ "$i" -lt "$max" ]; then
-              echo "::notice::$label not yet available ($status) — retrying in ${delay}s"
-              sleep $delay
-            else
-              echo "::error::$label ($rds_id) is not available after $max attempts (last status: $status)"
-              exit 1
-            fi
-          done
-        }
-
-        check_rds "$RDS_MS1" "db_ms1"
-        check_rds "$RDS_MS2" "db_ms2"
-        check_rds "$RDS_MS3" "db_ms3"
-
-        echo "::notice::All 3 RDS instances are available"
+          if [ "$i" -lt "$max" ]; then
+            echo "::notice::framecast_db not yet available ($status) — retrying in ${delay}s"
+            sleep $delay
+          else
+            echo "::error::framecast_db ($rds_id) is not available after $max attempts (last status: $status)"
+            exit 1
+          fi
+        done
 
     - name: Health Check Summary
       if: always()
@@ -84,9 +63,7 @@ runs:
           echo ""
           echo "| Instance | Endpoint |"
           echo "|----------|----------|"
-          echo "| db_ms1 (ms-identity) | \`${{ inputs.rds_ms1_endpoint }}\` |"
-          echo "| db_ms2 (ms-order) | \`${{ inputs.rds_ms2_endpoint }}\` |"
-          echo "| db_ms3 (ms-workshop) | \`${{ inputs.rds_ms3_endpoint }}\` |"
+          echo "| framecast_db | \`${{ inputs.rds_endpoint }}\` |"
           echo ""
           echo "| | |"
           echo "|---|---|"

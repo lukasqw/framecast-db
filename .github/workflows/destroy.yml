@@ -1,8 +1,16 @@
-﻿name: Destroy DB Infrastructure
+name: Destroy DB Infrastructure
 
 on:
   workflow_dispatch:
     inputs:
+      environment:
+        description: 'Environment to destroy'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+        default: staging
       confirmation:
         description: 'Type "DESTROY" to confirm'
         required: true
@@ -13,18 +21,20 @@ permissions:
   id-token: write
 
 concurrency:
-  group: terraform-destroy-db
+  group: terraform-destroy-${{ github.event.inputs.environment }}
   cancel-in-progress: false
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  ENVIRONMENT: ${{ github.event.inputs.environment }}
+  TF_DIR: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
 
 jobs:
   destroy:
-    name: Destroy â€” production
+    name: Destroy — ${{ github.event.inputs.environment }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    environment: production-destroy
+    timeout-minutes: 60
+    environment: ${{ github.event.inputs.environment }}-destroy
 
     steps:
       - name: Validate Confirmation
@@ -52,9 +62,9 @@ jobs:
           terraform_wrapper: false
 
       - name: Terraform Init
-        working-directory: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
+        working-directory: ${{ env.TF_DIR }}
         env:
-          TF_BACKEND_BUCKET: ${{ vars.TF_STATE_BUCKET || 'fiap-soat-tf-backend-oficina-tech' }}
+          TF_BACKEND_BUCKET: ${{ vars.TF_STATE_BUCKET || 'fiap-soat-tf-backend-framecast' }}
           TF_BACKEND_REGION: ${{ env.AWS_REGION }}
         run: |
           if [ -z "$TF_BACKEND_BUCKET" ]; then
@@ -66,7 +76,7 @@ jobs:
             -backend-config="region=$TF_BACKEND_REGION"
 
       - name: Terraform Destroy
-        working-directory: ${{ vars.TF_WORKING_DIR || 'terraform/environments/production' }}
+        working-directory: ${{ env.TF_DIR }}
         env:
           TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
         run: terraform destroy -auto-approve

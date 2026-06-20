@@ -1,24 +1,27 @@
 # Main Configuration - Database Infrastructure
 #
 # Provisiona:
-#   - 1 Security Group compartilhado pelas 3 instâncias RDS
-#   - 3 instâncias RDS PostgreSQL 16 (db_ms1, db_ms2, db_ms3)
-#   - 1 tabela DynamoDB (order_history) para ms-order-service
+#   - 1 Security Group para a instância RDS
+#   - 1 instância RDS PostgreSQL 16 (framecast_db), compartilhada por api + worker
 #
-# ATENÇÃO: migrar de uma instância única para for_each destrói e recria
-# os recursos RDS. Fazer backup antes de aplicar em ambiente existente.
+# O schema (users, videos, outbox_events) é responsabilidade da framecast-api
+# via GORM AutoMigrate — esta instância é entregue em branco.
+#
+# A connection string NÃO é armazenada no Secrets Manager: a senha vive como
+# GitHub secret (DB_PASSWORD) e o deploy.yml de api/worker monta o DATABASE_URL
+# a partir dela + o output rds_address.
 
-# ─── Security Group (compartilhado pelas 3 instâncias) ───────────────────────
+# ─── Security Group da instância RDS ─────────────────────────────────────────
 
 resource "aws_security_group" "rds" {
-  name        = "${var.project_name}-rds-sg"
-  description = "Security group for RDS databases (db_ms1, db_ms2, db_ms3)"
+  name        = "framecast-rds-sg"
+  description = "Security group for the framecast_db RDS instance"
   vpc_id      = data.aws_vpc.main.id
 
   tags = merge(
     local.common_tags,
     {
-      Name         = "${var.project_name}-rds-sg"
+      Name         = "framecast-rds-sg"
       ResourceType = "security-group"
       Service      = "ec2"
       Purpose      = "rds-database"
@@ -48,7 +51,7 @@ resource "aws_vpc_security_group_ingress_rule" "rds_from_eks_cluster_nodes" {
   tags = merge(
     local.common_tags,
     {
-      Name    = "${var.project_name}-rds-from-eks-nodes"
+      Name    = "framecast-rds-from-eks-nodes"
       Purpose = "allow-eks-nodes-to-rds"
     }
   )
@@ -71,12 +74,13 @@ resource "aws_vpc_security_group_egress_rule" "rds_all" {
   cidr_ipv4         = "0.0.0.0/0"
 }
 
-# ─── RDS PostgreSQL — uma instância por microsserviço ────────────────────────
+# ─── RDS PostgreSQL — instância única compartilhada ──────────────────────────
 #
-# for_each em local.databases cria:
-#   module.rds["ms1"] → db_ms1  (ms-identity)
-#   module.rds["ms2"] → db_ms2  (ms-order-service)
-#   module.rds["ms3"] → db_ms3  (ms-workshop)
+# for_each em local.databases (1 entrada) cria:
+#   module.rds["framecast"] → framecast_db
+#
+# Preservar o for_each mantém o padrão do repo base e permite adicionar bancos
+# futuramente editando locals.tf. NÃO renomear a chave sem `terraform state mv`.
 
 module "rds" {
   for_each = local.databases
@@ -102,43 +106,7 @@ module "rds" {
   tags = merge(
     local.common_tags,
     {
-      Microservice = each.key
-      Database     = each.value.database_name
-    }
-  )
-}
-
-# ─── DynamoDB — histórico de OS do ms-order-service ──────────────────────────
-#
-# Tabela com billing PAY_PER_REQUEST (sem capacity planning manual).
-# Partition key: order_id (UUID da OS)
-# Sort key:      occurred_at (ISO 8601 — garante ordenação cronológica)
-
-resource "aws_dynamodb_table" "order_history" {
-  name         = var.dynamodb_order_history_table
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "order_id"
-  range_key    = "occurred_at"
-
-  attribute {
-    name = "order_id"
-    type = "S"
-  }
-
-  attribute {
-    name = "occurred_at"
-    type = "S"
-  }
-
-  # TTL opcional — desabilitado (histórico mantido indefinidamente)
-  # Para habilitar: adicionar ttl { attribute_name = "expires_at"; enabled = true }
-
-  tags = merge(
-    local.common_tags,
-    {
-      Name         = var.dynamodb_order_history_table
-      Microservice = "ms2"
-      Purpose      = "service-order-status-history"
+      Database = each.value.database_name
     }
   )
 }

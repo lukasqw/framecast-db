@@ -16,7 +16,7 @@ inputs:
   tf_state_bucket:
     description: 'S3 bucket for Terraform state — maps to TF_STATE_BUCKET GitHub Actions variable'
     required: false
-    default: 'fiap-soat-tf-backend-oficina-tech'
+    default: 'fiap-soat-tf-backend-framecast'
   aws_access_key_id:
     description: 'AWS Access Key ID'
     required: true

@@ -8,7 +8,7 @@ variable "aws_region" {
 variable "project_name" {
   description = "Nome do projeto (usado como prefixo nos identifiers RDS)"
   type        = string
-  default     = "EKS-OFICINA-TECH"
+  default     = "framecast"
 }
 
 variable "environment" {
@@ -17,13 +17,24 @@ variable "environment" {
   default     = "production"
 }
 
-# ─── RDS Variables (aplicadas às 3 instâncias) ────────────────────────────────
-# Uma única senha é usada nas 3 instâncias por simplicidade.
-# Para senhas independentes por MS, substituir por db_password_ms1/2/3.
+# ─── RDS Variables ────────────────────────────────────────────────────────────
+# Uma única instância RDS compartilhada por framecast-api e framecast-worker.
 variable "db_password" {
-  description = "Senha do banco de dados RDS (compartilhada entre as 3 instâncias)"
+  description = "Senha do banco de dados RDS (master password)"
   type        = string
   sensitive   = true
+}
+
+variable "db_name" {
+  description = "Nome do banco de dados criado na instância"
+  type        = string
+  default     = "framecast_db"
+}
+
+variable "db_username" {
+  description = "Usuário master do banco (owner único, usado por api e worker)"
+  type        = string
+  default     = "framecast"
 }
 
 variable "rds_engine_version" {
@@ -33,13 +44,13 @@ variable "rds_engine_version" {
 }
 
 variable "rds_instance_class" {
-  description = "Classe da instância RDS (aplicada às 3 instâncias)"
+  description = "Classe da instância RDS"
   type        = string
   default     = "db.t3.micro"
 }
 
 variable "rds_allocated_storage" {
-  description = "Storage alocado em GB por instância"
+  description = "Storage alocado em GB"
   type        = number
   default     = 20
 }
@@ -51,13 +62,13 @@ variable "rds_backup_retention_period" {
 }
 
 variable "rds_multi_az" {
-  description = "Habilitar Multi-AZ nas instâncias RDS"
+  description = "Habilitar Multi-AZ na instância RDS"
   type        = bool
   default     = false
 }
 
 variable "rds_skip_final_snapshot" {
-  description = "Pular snapshot final ao destruir (false em produção)"
+  description = "Pular snapshot final ao destruir (true para a demo efêmera)"
   type        = bool
   default     = true
 }
@@ -68,16 +79,9 @@ variable "rds_deletion_protection" {
   default     = false
 }
 
-# ─── DynamoDB Variables ───────────────────────────────────────────────────────
-variable "dynamodb_order_history_table" {
-  description = "Nome da tabela DynamoDB para histórico de OS do ms-order-service"
-  type        = string
-  default     = "order_history"
-}
-
 # ─── Terraform State ──────────────────────────────────────────────────────────
 variable "tf_state_bucket" {
   description = "Bucket S3 para state do Terraform. Configure TF_STATE_BUCKET nas variáveis do repositório no GitHub Actions. Default mantido para compatibilidade local."
   type        = string
-  default     = "fiap-soat-tf-backend-oficina-tech"
+  default     = "fiap-soat-tf-backend-framecast"
 }

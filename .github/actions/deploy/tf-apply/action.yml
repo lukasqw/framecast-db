@@ -1,7 +1,7 @@
 name: 'Deploy — Terraform Apply'
 description: >
-  Initialises Terraform, runs terraform apply and exports the RDS outputs
-  (endpoint, port, database name). Fails with detailed output on any error —
+  Initialises Terraform, runs terraform apply and exports the RDS output
+  (address). Fails with detailed output on any error —
   the release tag is NOT created if this action fails.
 
 inputs:
@@ -16,7 +16,7 @@ inputs:
   tf_state_bucket:
     description: 'S3 bucket for Terraform state — maps to TF_STATE_BUCKET GitHub Actions variable'
     required: false
-    default: 'fiap-soat-tf-backend-oficina-tech'
+    default: 'fiap-soat-tf-backend-framecast'
   aws_access_key_id:
     description: 'AWS Access Key ID'
     required: true
@@ -41,15 +41,9 @@ inputs:
     default: ''
 
 outputs:
-  rds_ms1_endpoint:
-    description: 'RDS endpoint — db_ms1 (ms-identity)'
-    value: ${{ steps.outputs.outputs.rds_ms1_endpoint }}
-  rds_ms2_endpoint:
-    description: 'RDS endpoint — db_ms2 (ms-order-service)'
-    value: ${{ steps.outputs.outputs.rds_ms2_endpoint }}
-  rds_ms3_endpoint:
-    description: 'RDS endpoint — db_ms3 (ms-workshop)'
-    value: ${{ steps.outputs.outputs.rds_ms3_endpoint }}
+  rds_endpoint:
+    description: 'RDS address — framecast_db'
+    value: ${{ steps.outputs.outputs.rds_endpoint }}
 
 runs:
   using: composite
@@ -186,12 +180,8 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working_dir }}
       run: |
-        RDS_MS1=$(terraform output -raw rds_ms1_address 2>/dev/null || echo "")
-        RDS_MS2=$(terraform output -raw rds_ms2_address 2>/dev/null || echo "")
-        RDS_MS3=$(terraform output -raw rds_ms3_address 2>/dev/null || echo "")
+        RDS_ADDR=$(terraform output -raw rds_address 2>/dev/null || echo "")
 
-        echo "rds_ms1_endpoint=$RDS_MS1" >> $GITHUB_OUTPUT
-        echo "rds_ms2_endpoint=$RDS_MS2" >> $GITHUB_OUTPUT
-        echo "rds_ms3_endpoint=$RDS_MS3" >> $GITHUB_OUTPUT
+        echo "rds_endpoint=$RDS_ADDR" >> $GITHUB_OUTPUT
 
-        echo "::notice::db_ms1: $RDS_MS1 | db_ms2: $RDS_MS2 | db_ms3: $RDS_MS3"
+        echo "::notice::framecast_db: $RDS_ADDR"
