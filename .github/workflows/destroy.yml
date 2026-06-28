@@ -18,7 +18,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: terraform-destroy-${{ github.event.inputs.environment }}
