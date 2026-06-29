@@ -184,3 +184,4 @@ A tag de release só é criada **após** o `rds-check` confirmar a instância `f
 | `AWS_SESSION_TOKEN` | Secret | Session token (AWS Academy) |
 | `DB_PASSWORD` | Secret | Senha master do RDS (`TF_VAR_db_password`) |
 | `TF_STATE_BUCKET` | Variable | Bucket S3 do Terraform state |
+
