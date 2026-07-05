@@ -26,10 +26,13 @@ O módulo RDS é instanciado com `for_each = local.databases` (1 entrada), prese
 | `storage_encrypted` | `true` |
 | `multi_az` | `false` (single-AZ, custo da demo) |
 | `backup_retention_period` | 7 dias |
+| `backup_window` | `03:00–04:00` UTC |
+| `maintenance_window` | `sun:04:00–sun:05:00` UTC |
 | `port` | `5432` |
 | `publicly_accessible` | `false` |
 | `deletion_protection` | `false` |
 | `skip_final_snapshot` | `true` (instância efêmera para a demo) |
+| `enabled_cloudwatch_logs_exports` | `["postgresql", "upgrade"]` |
 | `rds.force_ssl` (parameter group) | `0` (consumidor usa `sslmode=require` em prod) |
 
 | Chave do mapa | identifier | database_name | username |
@@ -163,17 +166,23 @@ terraform output
 
 Nunca commitar `terraform.tfvars` com senha. Use `TF_VAR_db_password`.
 
+> **Nota:** `.terraform.lock.hcl` está no `.gitignore`. Isso significa que versões de provider podem variar entre runs locais e CI. Para ambientes críticos, remova `.terraform.lock.hcl` do `.gitignore` e comite o arquivo de lock.
+
 ## CI/CD
 
 | Workflow | Gatilho | Descrição |
 |---|---|---|
-| `ci.yml` | PR para `develop`/`main` (paths: `terraform/**`), push em `develop` | Validate, security scan, terraform plan |
-| `release.yml` | Push em `develop` (paths: `terraform/**`), `workflow_dispatch` | Cria/atualiza PR de release (Conventional Commits) |
-| `deploy.yml` | PR de `release/*` mergeado em `main`, `workflow_dispatch` | Terraform apply, RDS health check, finaliza tag |
-| `destroy.yml` | `workflow_dispatch` (confirmação manual) | Terraform destroy |
+| `ci.yml` | PR para `develop`/`main` (paths: `terraform/**`); push em `develop` (paths: `terraform/**`) | Validate, security scan, terraform plan |
+| `release.yml` | Push em `develop` (**sem filtro de paths** — qualquer commit dispara); `workflow_dispatch` | Cria/atualiza PR de release (Conventional Commits) |
+| `deploy.yml` | PR de `release/*` mergeado em `main`; `workflow_dispatch` | Terraform apply, RDS health check, finaliza tag |
+| `destroy.yml` | `workflow_dispatch` (confirmação `"DESTROY"`, ambiente separado `*-destroy`) | Terraform destroy |
 | `rollback.yml` | `workflow_dispatch` (versão + ambiente) | Aplica Terraform de tag anterior |
 
 A tag de release só é criada **após** o `rds-check` confirmar a instância `framecast_db` em `available`.
+
+> **Atenção — `rollback.yml`:** a chamada à action `tf-apply` não passa o input `tf_state_bucket` (diferente de `deploy.yml` que o repassa explicitamente). Se a variável `TF_STATE_BUCKET` não estiver configurada no repositório, a inicialização do backend pode falhar durante um rollback.
+
+> **Atenção — `destroy.yml` concurrency:** usa o grupo `terraform-destroy-<env>`, separado do grupo `deploy` usado por `deploy.yml`/`rollback.yml`. Isso permite que um destroy corra em paralelo com um deploy ou rollback — estado indesejado que `CLAUDE.md` avisa para evitar.
 
 ### Secrets e variáveis no GitHub
 
